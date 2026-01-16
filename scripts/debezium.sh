@@ -1,4 +1,6 @@
 #!/bin/bash
+# Load environment variables
+gcloud secrets versions access latest --secret="env" > .env
 
 # These variables will be filled by Terraform
 PG_HOST="vm-postgres"

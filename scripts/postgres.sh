@@ -1,4 +1,6 @@
 #!/bin/bash
+gcloud secrets versions access latest --secret="env" > .env
+APP_DIR="/home/$SSH_USER/E-commerce-Data-Pipeline"
 
 if ! command -v uv &> /dev/null; then
     echo ">>> Installing uv..."
