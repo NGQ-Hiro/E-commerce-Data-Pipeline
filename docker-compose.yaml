@@ -13,7 +13,6 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/olist_csv:/data
       - ./postgres/init:/docker-entrypoint-initdb.d
-      - ./postgres/snap_shot:/snap_shot
     networks:
       - my-network
     healthcheck:
@@ -25,13 +24,9 @@ services:
   debezium:
     image: debezium/server:2.7.3.Final
     container_name: debezium
-    depends_on:
-      postgres:
-        condition: service_healthy
     ports:
       - 8080:8080
     volumes:
-      - ./infra/gcp-debezium-key.json:/debezium/conf/gcp-debezium-key.json
       - debezium_data:/debezium/data
     environment:
       # ================= Sink (Pub/Sub) =================

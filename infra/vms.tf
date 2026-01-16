@@ -42,7 +42,9 @@ resource "google_compute_instance" "vm_debezium" {
     ssh-keys = "${local.ssh_user}:${file(local.public_key_path)}"
   }
 
-  metadata_startup_script = file("${path.module}/../scripts/vm_setup.sh")
+  metadata_startup_script = templatefile("${path.module}/../scripts/vm_setup.sh", {
+    target_serivce = "debezium"
+  })
 
   service_account {
     email = google_service_account.debezium_sa.email
@@ -50,7 +52,7 @@ resource "google_compute_instance" "vm_debezium" {
   }
 }
 
-# --- VM 1: Debezium ---
+# --- VM 2: Postgres ---
 resource "google_compute_instance" "vm_postgres" {
   name         = "vm-postgres"
   machine_type = "e2-medium"
@@ -74,8 +76,14 @@ resource "google_compute_instance" "vm_postgres" {
     ssh-keys = "${local.ssh_user}:${file(local.public_key_path)}"
   }
 
-  metadata_startup_script = file("${path.module}/../scripts/vm_setup.sh")
-  
+  metadata_startup_script = templatefile("${path.module}/../scripts/vm_setup.sh", {
+    target_serivce = "postgres"
+  })
+
+  service_account {
+    email = google_service_account.postgres_sa.email
+    scopes = ["cloud-platform"]
+  }
 }
 # --- VM 2: Airflow & DBT ---
 # resource "google_compute_instance" "vm_airflow" {

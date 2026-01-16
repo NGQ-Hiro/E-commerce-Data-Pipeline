@@ -67,7 +67,7 @@ resource "google_pubsub_subscription" "cdc_gcs_subscriptions" {
     max_messages = 10000
   }
 
-  ack_deadline_seconds = 30
+  ack_deadline_seconds = 300
   depends_on = [
     google_storage_bucket_iam_member.pubsub_sink_creator,
     google_storage_bucket_iam_member.pubsub_sink_reader

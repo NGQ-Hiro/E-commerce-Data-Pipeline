@@ -1,10 +1,28 @@
 # allow terraform to manage IAM for GCP
 
-# --- NEW: Debezium IAM & Key Generation ---
+data "google_secret_manager_secret" "common_env" {
+  secret_id = "env"  # Tên chính xác bạn thấy trong gcloud
+}
+
+# --- NEW: Debezium IAM ---
 resource "google_project_iam_member" "debezium_pubsub_permissions" {
   project = "e-commerce-484010"
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${google_service_account.debezium_sa.email}"
+}
+
+
+resource "google_secret_manager_secret_iam_member" "debezium_secret_access" {
+  secret_id = data.google_secret_manager_secret.common_env.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.debezium_sa.email}"
+}
+
+# --- NEW: Postgres ---
+resource "google_secret_manager_secret_iam_member" "postgres_secret_access" {
+  secret_id = data.google_secret_manager_secret.common_env.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.postgres_sa.email}"
 }
 
 # --- NEW: Pub/Sub to GCS Sink Permissions ---
