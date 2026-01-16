@@ -23,4 +23,5 @@ echo ">>> SUCCESS: Connection to Postgres established!"
 echo ">>> ------------------------------------------------"
 
 echo ">>> Starting Debezium..."
+sleep 10
 docker compose up -d --no-deps debezium
