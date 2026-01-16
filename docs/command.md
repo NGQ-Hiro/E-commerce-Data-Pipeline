@@ -17,7 +17,7 @@ docker exec -it postgres psql -U admin -d db
 \du -- liệt kê user (role)
 \dn -- liệt kê schema
 \q -- thoát psql
-
+\x
 # Debezium
 
 - First time debezium init and read the database, it scan all table then read the log from that current (only 1 time when init debezium)
