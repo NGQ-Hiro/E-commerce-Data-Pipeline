@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # These variables will be filled by Terraform
-PG_HOST="${postgres_ip_placeholder}"
+PG_HOST="${VM_POSTGRES}"
 PG_PORT="5432"
 
 echo ">>> [Debezium Helper] Starting connectivity check..."

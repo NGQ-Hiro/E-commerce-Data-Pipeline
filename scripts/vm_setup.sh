@@ -47,7 +47,7 @@ echo ">>> Target Service: $SERVICE_NAME"
 
 if [ "$SERVICE_NAME" == "postgres" ]; then
     # Case A: Postgres -> Chỉ up container rồi xong
-    source $APP_DIR/scripts/debezium.sh
+    source $APP_DIR/scripts/postgres.sh
     
 elif [ "$SERVICE_NAME" == "debezium" ]; then
     # Case B: Debezium -> Up container -> Gọi script phụ
