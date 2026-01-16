@@ -1,11 +1,10 @@
 #!/bin/bash
 
-# Install UV
-
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 
-source "$HOME/.local/bin/env"
+if ! command -v uv &> /dev/null; then
+    echo ">>> Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
 
 # Start Postgres
 echo ">>> Starting Postgres..."

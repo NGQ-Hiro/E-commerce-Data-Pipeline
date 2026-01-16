@@ -1,68 +1,45 @@
 #!/bin/bash
-set -e  # Dừng ngay nếu có lỗi xảy ra
+set -e
 
-# --- CẤU HÌNH ---
+# --- 1. SETUP LOGGING ---
+# Ghi log ra /var/log/startup_script.log để dễ kiểm tra
+exec > >(tee /var/log/startup_script.log|logger -t startup_script -s 2>/dev/console) 2>&1
+
+echo ">>> [ROOT] Bắt đầu cài đặt VM..."
+
+# --- 2. CẤU HÌNH ---
 SSH_USER="hieu"
 REPO_URL="https://github.com/NGQ-Hiro/E-commerce-Data-Pipeline.git"
 APP_DIR="/home/$SSH_USER/E-commerce-Data-Pipeline"
-ENV="/home/$SSH_USER/E-commerce-Data-Pipeline/.env"
 
-# Cập nhật & Cài Git
+# --- 4. UPDATE & CÀI GIT, DOCKER ---
+echo ">>> Cập nhật hệ thống và cài đặt Git, Docker..."
 apt-get update && apt-get install -y git
 
-# Cài Docker (Dùng script tự động chính chủ của Docker)
-curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
+# Cài Docker (nếu chưa có)
+if ! command -v docker &> /dev/null; then
+    curl -fsSL https://get.docker.com | sh
+fi
 
-# Cấp quyền Docker cho user (để không phải gõ sudo khi dùng docker)
+# Thêm hieu vào nhóm docker (để bạn SSH vào gõ lệnh docker không cần sudo)
 usermod -aG docker $SSH_USER
 
-# Clone Repo & Phân quyền
-if [ ! -d "$APP_DIR" ]; then
+# --- 5. CLONE GITHUB ---
+echo ">>> Cloning repository về $APP_DIR..."
+
+# Nếu thư mục chưa có code thì clone
+if [ ! -d "$APP_DIR/.git" ]; then
+    # Clone bằng quyền Root (nhưng vào thư mục của hieu)
     git clone "$REPO_URL" "$APP_DIR"
-    
-    # Đổi chủ sở hữu từ 'root' sang 'hieu'
-    chown -R $SSH_USER:$SSH_USER "$APP_DIR"
-fi
-
-echo "--- Cài đặt hoàn tất ---"
-
-# Download .env file
-cd $APP_DIR
-gcloud secrets versions access latest --secret="env" > .env
-
-# Load biến môi trường từ .env
-if [ -f "$ENV" ]; then
-  set -a
-  source "$ENV"
-  set +a
 else
-  echo "❌ .env not found: $ENV" >&2
-  exit 1
+    echo ">>> Repo đã tồn tại, cập nhật code mới nhất..."
+    cd "$APP_DIR" && git pull
 fi
 
-# Flow control for each service
-SERVICE_NAME="${target_serivce}"
-echo ">>> Target Service: $SERVICE_NAME"
+# --- 6. PHÂN QUYỀN (QUAN TRỌNG NHẤT) ---
+# Vì Root clone nên chủ sở hữu đang là Root. 
+# Phải chuyển sang cho hieu để bạn SSH vào có thể sửa file/chạy file.
+echo ">>> Chuyển quyền sở hữu folder cho $SSH_USER..."
+chown -R $SSH_USER:$SSH_USER "$APP_DIR"
 
-if [ "$SERVICE_NAME" == "postgres" ]; then
-    # Case A: Postgres -> Chỉ up container rồi xong
-    source $APP_DIR/scripts/postgres.sh
-    
-elif [ "$SERVICE_NAME" == "debezium" ]; then
-    # Case B: Debezium -> Up container -> Gọi script phụ
-    echo ">>> Calling external script to wait for Postgres..."
-    # GỌI FILE SCRIPT PHỤ
-    source $APP_DIR/scripts/debezium.sh
-
-elif [ "$SERVICE_NAME" == "airflow" ]; then
-    # Case C: Airflow -> Up container -> Gọi script phụ
-    echo ">>> Starting Airflow..."
-    docker compose up -d --no-deps airflow
-    
-    echo ">>> Calling external script to wait for Airflow..."
-    # GỌI FILE SCRIPT PHỤ
-    source $APP_DIR/scripts/airflow.sh
-else
-    echo "Unknown service!"
-fi
+echo ">>> [ROOT] Hoàn tất cài đặt!"

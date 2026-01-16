@@ -63,3 +63,6 @@ WHERE id = 'peter';
 
 - gcloud init: sign in -> create or choose project 
 - gsutil ls: ls the bucket in gcs
+
+# SSH
+ssh -i ~/.ssh/gcloud hieu@<ip>
