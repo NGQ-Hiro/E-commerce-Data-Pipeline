@@ -32,8 +32,8 @@ services:
       # ================= Sink (Pub/Sub) =================
       - DEBEZIUM_SINK_TYPE=pubsub
       - DEBEZIUM_SINK_PUBSUB_PROJECT_ID=e-commerce-484010
-      - DEBEZIUM_SINK_PUBSUB_KEY_FILE=/debezium/conf/gcp-debezium-key.json
-      - GOOGLE_APPLICATION_CREDENTIALS=/debezium/conf/gcp-debezium-key.json
+      # - DEBEZIUM_SINK_PUBSUB_KEY_FILE=/debezium/conf/gcp-debezium-key.json
+      # - GOOGLE_APPLICATION_CREDENTIALS=/debezium/conf/gcp-debezium-key.json
 
       # ================= Source (Postgres) =================
       - DEBEZIUM_SOURCE_CONNECTOR_CLASS=io.debezium.connector.postgresql.PostgresConnector
