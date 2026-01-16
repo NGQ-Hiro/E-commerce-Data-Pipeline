@@ -7,11 +7,6 @@ resource "google_project_iam_member" "debezium_pubsub_permissions" {
   member  = "serviceAccount:${google_service_account.debezium_sa.email}"
 }
 
-# 3. Generate the JSON Key for this Service Account
-resource "google_service_account_key" "debezium_key" {
-  service_account_id = google_service_account.debezium_sa.name
-}
-
 # --- NEW: Pub/Sub to GCS Sink Permissions ---
 
 # 1. Retrieve the Google-managed Pub/Sub Service Account email in this project

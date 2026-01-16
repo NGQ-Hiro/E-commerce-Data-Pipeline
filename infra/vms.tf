@@ -15,15 +15,47 @@ resource "google_compute_firewall" "allow_custom_ports" {
   }
 
   source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["data-lab"]
+  target_tags   = ["my-cluster"]
 }
 
-# --- VM 1: Debezium & Postgres ---
+# --- VM 1: Debezium ---
 resource "google_compute_instance" "vm_debezium" {
-  name         = "vm-debezium-postgres"
+  name         = "vm-debezium"
   machine_type = "e2-medium"
   zone = var.zone
-  tags         = ["data-lab"]
+  tags         = ["my-cluster"]
+
+  boot_disk {
+    initialize_params {
+      image = var.vm_image
+      size  = 10
+    }
+  }
+
+  network_interface {
+    network = "default"
+    access_config {} # Cấp Public IP
+  }
+
+  # Inject SSH Key
+  metadata = {
+    ssh-keys = "${local.ssh_user}:${file(local.public_key_path)}"
+  }
+
+  metadata_startup_script = file("${path.module}/../scripts/vm_setup.sh")
+
+  service_account {
+    email = google_service_account.debezium_sa.email
+    scopes = ["cloud-platform"]
+  }
+}
+
+# --- VM 1: Debezium ---
+resource "google_compute_instance" "vm_postgres" {
+  name         = "vm-postgres"
+  machine_type = "e2-medium"
+  zone = var.zone
+  tags         = ["my-cluster"]
 
   boot_disk {
     initialize_params {
@@ -43,13 +75,13 @@ resource "google_compute_instance" "vm_debezium" {
   }
 
   metadata_startup_script = file("${path.module}/../scripts/vm_setup.sh")
+  
 }
-
 # --- VM 2: Airflow & DBT ---
 # resource "google_compute_instance" "vm_airflow" {
 #   name         = "vm-airflow-dbt"
 #   machine_type = "e2-standard-2"
-#   tags         = ["data-lab"]
+#   tags         = ["my-cluster"]
 
 #   boot_disk {
 #     initialize_params {
