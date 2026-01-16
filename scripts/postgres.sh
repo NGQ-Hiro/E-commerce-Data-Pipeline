@@ -12,7 +12,7 @@ fi
 echo ">>> Starting Postgres..."
 docker compose up -d --no-deps postgres
 
-sleep 10
+sleep 20
 
 # Install python package
 uv sync
