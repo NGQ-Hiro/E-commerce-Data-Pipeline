@@ -58,7 +58,7 @@ def stream_table_to_gcs(pg_cursor, table_name, bucket_name, gcs_hook):
     temp_file_path = None
     try:
         # 1. Write to Disk
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(mode='wb+', delete=False) as temp_file:
             temp_file_path = temp_file.name
             sql = f"COPY (SELECT * FROM public.\"{table_name}\") TO STDOUT WITH CSV HEADER"
             pg_cursor.copy_expert(sql, temp_file)
