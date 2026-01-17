@@ -1,7 +1,7 @@
 locals {
   ssh_user = "hieu"
 
-  public_key_path = "C:/Users/QUANG HIEU/.ssh/gcloud.pub"
+  public_key_path = "/home/newuser/.ssh/gcloud.pub"
 }
 
 # --- Firewall: Mở cổng SSH, Web UI và Database ---

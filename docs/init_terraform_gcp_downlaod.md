@@ -32,6 +32,10 @@
   sign in with your gg account
   choose or create new project
 
+## SSH
+- ssh-keygen -t ed25519 -f ~/.ssh/gcloud -C "gcloud"
+
+
 ## Teraform
 
 - Create project

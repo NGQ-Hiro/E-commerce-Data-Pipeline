@@ -17,7 +17,8 @@ docker exec -it postgres psql -U admin -d db
 \du -- liệt kê user (role)
 \dn -- liệt kê schema
 \q -- thoát psql
-\x
+\x -- đổi cách trình bày tables
+
 # Debezium
 
 - First time debezium init and read the database, it scan all table then read the log from that current (only 1 time when init debezium)
@@ -61,8 +62,9 @@ WHERE id = 'peter';
 
 # GCP
 
-- gcloud init: sign in -> create or choose project 
+- gcloud init: sign in -> create or choose project
 - gsutil ls: ls the bucket in gcs
 
 # SSH
+
 ssh -i ~/.ssh/gcloud hieu@<ip>

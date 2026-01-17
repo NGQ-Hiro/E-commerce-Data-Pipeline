@@ -3,9 +3,8 @@ from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from pendulum import datetime
 
-
 def test_postgres_connection():
-    hook = PostgresHook(postgres_conn_id="postgres_default")
+    hook = PostgresHook()
     conn = hook.get_conn()
     cursor = conn.cursor()
     cursor.execute("SELECT 1;")
