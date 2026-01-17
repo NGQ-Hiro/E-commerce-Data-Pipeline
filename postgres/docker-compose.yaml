@@ -13,3 +13,6 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./olist_csv:/data
       - ./init:/docker-entrypoint-initdb.d
+
+volumes:
+  postgres_data:
