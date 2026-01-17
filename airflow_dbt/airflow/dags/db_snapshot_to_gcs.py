@@ -42,19 +42,27 @@ def create_slot_and_get_snapshot(cursor, slot_name):
         cursor.execute(create_sql)
         return cursor.fetchone()[2]
 
-def get_public_tables(cursor, snapshot_id):
-    cursor.execute("BEGIN ISOLATION LEVEL REPEATABLE READ;")
-    cursor.execute(f"SET TRANSACTION SNAPSHOT '{snapshot_id}';")
+# --- HELPER FUNCTIONS ---
+
+# 1. Hàm này chỉ lấy danh sách bảng (Không tự BEGIN transaction nữa)
+def get_public_tables(cursor):
+    # Lưu ý: Transaction đã được start ở bên ngoài (Main Task)
     cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
     return [row[0] for row in cursor.fetchall()]
 
+# 2. Sửa cú pháp COPY trong hàm này
 def stream_table_to_gcs(pg_cursor, table_name, bucket_name, gcs_hook):
     logging.info(f"Streaming table {table_name}...")
     temp_file_path = None
     try:
+        # Vẫn giữ mode='wb+' (Binary)
         with tempfile.NamedTemporaryFile(mode='wb+', delete=False) as temp_file:
             temp_file_path = temp_file.name
-            sql = f"COPY (SELECT * FROM public.\"{table_name}\") TO STDOUT WITH CSV HEADER"
+            
+            # [FIX QUAN TRỌNG]: Đổi sang cú pháp chuẩn COPY TO STDOUT
+            # Cú pháp này ổn định hơn COPY (SELECT *) và tránh lỗi protocol
+            sql = f"COPY public.\"{table_name}\" TO STDOUT WITH (FORMAT CSV, HEADER TRUE)"
+            
             pg_cursor.copy_expert(sql, temp_file)
         
         gcs_hook.upload(
@@ -63,6 +71,8 @@ def stream_table_to_gcs(pg_cursor, table_name, bucket_name, gcs_hook):
             filename=temp_file_path,
             mime_type='text/csv'
         )
+        logging.info(f"Uploaded {table_name} successfully.")
+        
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
@@ -79,6 +89,7 @@ def postgres_to_bigquery_pipeline_refactored():
         conn_args = pg_hook.get_connection(POSTGRES_CONN_ID)
         gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
         
+        # Connection Replication
         conn_repl = psycopg2.connect(
             host=conn_args.host, user=conn_args.login, password=conn_args.password,
             port=conn_args.port, dbname=conn_args.schema,
@@ -90,18 +101,39 @@ def postgres_to_bigquery_pipeline_refactored():
             create_publication_if_not_exists(cur_repl, PUBLICATION_NAME)
             snapshot_id = create_slot_and_get_snapshot(cur_repl, SLOT_NAME)
 
+            # --- Connection Worker (Nơi sửa lỗi chính) ---
             conn_worker = pg_hook.get_conn()
+            
+            # [FIX QUAN TRỌNG NHẤT]: Tắt Auto-transaction
+            # Nếu không có dòng này, copy_expert sẽ xung đột với transaction ngầm
+            conn_worker.autocommit = True 
+            
             cur_worker = conn_worker.cursor()
             
             try:
-                tables = get_public_tables(cur_worker, snapshot_id)
+                # 2. Tự quản lý Transaction thủ công
+                cur_worker.execute("BEGIN ISOLATION LEVEL REPEATABLE READ;")
+                cur_worker.execute(f"SET TRANSACTION SNAPSHOT '{snapshot_id}';")
+                
+                # 3. Lấy danh sách bảng (trong cùng transaction này)
+                tables = get_public_tables(cur_worker)
+                
+                # 4. Loop dump
                 for table in tables:
                     stream_table_to_gcs(cur_worker, table, BUCKET_NAME, gcs_hook)
-                conn_worker.commit()
+                
+                # 5. Commit thủ công
+                cur_worker.execute("COMMIT;")
                 return tables
+
+            except Exception as e:
+                logging.error(f"Error during dump: {e}")
+                cur_worker.execute("ROLLBACK;") # Rollback nếu lỗi
+                raise e
             finally:
                 cur_worker.close()
                 conn_worker.close()
+
         finally:
             cur_repl.close()
             conn_repl.close()
