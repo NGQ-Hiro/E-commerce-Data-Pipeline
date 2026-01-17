@@ -30,18 +30,37 @@ def create_publication_if_not_exists(cursor, pub_name):
         logging.info(f"Publication {pub_name} already exists. Skipping.")
 
 def create_slot_and_get_snapshot(cursor, slot_name):
-    """Tạo Replication Slot và trả về Snapshot ID"""
+    """
+    Tạo Replication Slot và trả về Snapshot ID.
+    Nếu Slot đã tồn tại: Xóa slot cũ đi và tạo slot mới để lấy Snapshot mới nhất.
+    """
+    create_sql = f"CREATE_REPLICATION_SLOT {slot_name} LOGICAL pgoutput EXPORT_SNAPSHOT;"
+    
     try:
-        cursor.execute(
-            f"CREATE_REPLICATION_SLOT {slot_name} LOGICAL pgoutput EXPORT_SNAPSHOT;"
-        )
+        # 1. Thử tạo Slot
+        cursor.execute(create_sql)
         result = cursor.fetchone()
         snapshot_id = result[2]
         logging.info(f"Created Slot '{slot_name}' | Snapshot ID: {snapshot_id}")
         return snapshot_id
+
     except psycopg2.errors.DuplicateObject:
-        cursor.connection.rollback()
-        raise ValueError(f"Slot '{slot_name}' already exists! Please drop it first.")
+        # 2. Nếu lỗi trùng lặp (Slot đã tồn tại)
+        cursor.connection.rollback() # Bắt buộc phải rollback để reset trạng thái connection
+        logging.warning(f"Slot '{slot_name}' already exists. Dropping and recreating...")
+        
+        # 3. Xóa Slot cũ
+        # Lưu ý: Nếu Debezium đang kết nối vào slot này, lệnh này có thể bị treo hoặc lỗi
+        # Bạn có thể cần tắt Debezium trước khi chạy DAG này.
+        cursor.execute(f"SELECT pg_drop_replication_slot('{slot_name}');")
+        logging.info(f"Dropped old slot '{slot_name}'.")
+        
+        # 4. Tạo lại Slot (Lần này chắc chắn thành công)
+        cursor.execute(create_sql)
+        result = cursor.fetchone()
+        snapshot_id = result[2]
+        logging.info(f"Re-created Slot '{slot_name}' | Snapshot ID: {snapshot_id}")
+        return snapshot_id
 
 def get_public_tables(cursor, snapshot_id):
     """Lấy danh sách bảng trong schema public tại thời điểm Snapshot"""
