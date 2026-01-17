@@ -25,10 +25,10 @@ resource "google_secret_manager_secret_iam_member" "postgres_secret_access" {
 }
 
 # --- NEW: Airflow IAM ---
-resource "google_secret_manager_secret_iam_member" "debezium_secret_access" {
+resource "google_secret_manager_secret_iam_member" "airflow_secret_access" {
   secret_id = data.google_secret_manager_secret.common_env.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.debezium_sa.email}"
+  member    = "serviceAccount:${google_service_account.airflow_sa.email}"
 }
 
 locals {

@@ -90,6 +90,7 @@ resource "google_compute_instance" "vm_debezium" {
 resource "google_compute_instance" "vm_airflow" {
   name         = "vm-airflow"
   machine_type = "e2-standard-2"
+  zone = var.zone
   tags         = ["my-cluster"]
 
   boot_disk {
