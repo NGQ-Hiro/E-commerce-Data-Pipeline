@@ -6,7 +6,7 @@ from airflow.providers.google.cloud.operators.pubsub import (
 from datetime import datetime
 
 PROJECT_ID = "e-commerce-484010"
-TOPIC_ID = "orders"
+TOPIC_ID = "test"
 
 with DAG("test_gcp_provider", start_date=datetime(2025, 1, 1), schedule=None) as dag:
     

@@ -109,7 +109,9 @@ resource "google_compute_instance" "vm_airflow" {
     ssh-keys = "${local.ssh_user}:${file(local.public_key_path)}"
   }
 
-  # metadata_startup_script = file("${path.module}/scripts/install_airflow_dbt.sh")
+  metadata_startup_script = templatefile("${path.module}/../scripts/vm_setup.sh", {
+    target_service = "airflow"
+  })
 
   service_account {
     email = google_service_account.airflow_sa.email
