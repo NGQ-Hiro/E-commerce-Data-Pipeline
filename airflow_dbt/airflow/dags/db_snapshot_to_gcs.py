@@ -7,7 +7,9 @@ from psycopg2.extras import LogicalReplicationConnection
 from airflow.decorators import dag, task
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
-from airflow.providers.google.cloud.operators.bigquery import BigQueryCreateExternalTableOperator
+from airflow.providers.google.cloud.sensors.gcs import GCSObjectsWithPrefixExistenceSensor
+from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
+from google.cloud import bigquery
 
 # --- CONFIGURATION ---
 GCP_CONN_ID = 'google_cloud_default'
@@ -18,10 +20,8 @@ DATASET_NAME = 'bronze'
 PUBLICATION_NAME = 'dbz_publication'
 SLOT_NAME = 'snap_shot'
 
-# --- HELPER FUNCTIONS (Tách logic ra ngoài) ---
-
+# --- HELPER FUNCTIONS (Giữ nguyên) ---
 def create_publication_if_not_exists(cursor, pub_name):
-    """Tạo Publication nếu chưa tồn tại"""
     try:
         cursor.execute(f"CREATE PUBLICATION {pub_name} FOR ALL TABLES;")
         logging.info(f"Created Publication: {pub_name}")
@@ -30,70 +30,40 @@ def create_publication_if_not_exists(cursor, pub_name):
         logging.info(f"Publication {pub_name} already exists. Skipping.")
 
 def create_slot_and_get_snapshot(cursor, slot_name):
-    """
-    Tạo Replication Slot và trả về Snapshot ID.
-    Nếu Slot đã tồn tại: Xóa slot cũ đi và tạo slot mới để lấy Snapshot mới nhất.
-    """
     create_sql = f"CREATE_REPLICATION_SLOT {slot_name} LOGICAL pgoutput EXPORT_SNAPSHOT;"
-    
     try:
-        # 1. Thử tạo Slot
         cursor.execute(create_sql)
         result = cursor.fetchone()
-        snapshot_id = result[2]
-        logging.info(f"Created Slot '{slot_name}' | Snapshot ID: {snapshot_id}")
-        return snapshot_id
-
+        return result[2]
     except psycopg2.errors.DuplicateObject:
-        # 2. Nếu lỗi trùng lặp (Slot đã tồn tại)
-        cursor.connection.rollback() # Bắt buộc phải rollback để reset trạng thái connection
-        logging.warning(f"Slot '{slot_name}' already exists. Dropping and recreating...")
-        
-        # 3. Xóa Slot cũ
-        # Lưu ý: Nếu Debezium đang kết nối vào slot này, lệnh này có thể bị treo hoặc lỗi
-        # Bạn có thể cần tắt Debezium trước khi chạy DAG này.
+        cursor.connection.rollback()
+        logging.warning(f"Slot '{slot_name}' exists. Recreating...")
         cursor.execute(f"SELECT pg_drop_replication_slot('{slot_name}');")
-        logging.info(f"Dropped old slot '{slot_name}'.")
-        
-        # 4. Tạo lại Slot (Lần này chắc chắn thành công)
         cursor.execute(create_sql)
-        result = cursor.fetchone()
-        snapshot_id = result[2]
-        logging.info(f"Re-created Slot '{slot_name}' | Snapshot ID: {snapshot_id}")
-        return snapshot_id
+        return cursor.fetchone()[2]
 
 def get_public_tables(cursor, snapshot_id):
-    """Lấy danh sách bảng trong schema public tại thời điểm Snapshot"""
-    # Set transaction về quá khứ
     cursor.execute("BEGIN ISOLATION LEVEL REPEATABLE READ;")
     cursor.execute(f"SET TRANSACTION SNAPSHOT '{snapshot_id}';")
-    
     cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
     return [row[0] for row in cursor.fetchall()]
 
 def stream_table_to_gcs(pg_cursor, table_name, bucket_name, gcs_hook):
-    """Thực hiện Dump 1 bảng xuống file tạm và upload lên GCS"""
     logging.info(f"Streaming table {table_name}...")
     temp_file_path = None
     try:
-        # 1. Write to Disk
         with tempfile.NamedTemporaryFile(mode='wb+', delete=False) as temp_file:
             temp_file_path = temp_file.name
             sql = f"COPY (SELECT * FROM public.\"{table_name}\") TO STDOUT WITH CSV HEADER"
             pg_cursor.copy_expert(sql, temp_file)
-        logging.info(f"Snapshot {table_name} to {temp_file_path}")
         
-        # 2. Upload to GCS
         gcs_hook.upload(
             bucket_name=bucket_name,
             object_name=f"{table_name}/snapshot/{table_name}.csv",
             filename=temp_file_path,
             mime_type='text/csv'
         )
-        logging.info(f"Uploaded {table_name} successfully.")
-        
     finally:
-        # 3. Clean Disk
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
@@ -109,7 +79,6 @@ def postgres_to_bigquery_pipeline_refactored():
         conn_args = pg_hook.get_connection(POSTGRES_CONN_ID)
         gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
         
-        # Connect Replication (Connection Cha for snapshot)
         conn_repl = psycopg2.connect(
             host=conn_args.host, user=conn_args.login, password=conn_args.password,
             port=conn_args.port, dbname=conn_args.schema,
@@ -118,72 +87,105 @@ def postgres_to_bigquery_pipeline_refactored():
         cur_repl = conn_repl.cursor()
 
         try:
-            # 2. Setup Logic (Gọi Helper Functions)
             create_publication_if_not_exists(cur_repl, PUBLICATION_NAME)
             snapshot_id = create_slot_and_get_snapshot(cur_repl, SLOT_NAME)
 
-            # 3. Dump Data Logic
-            # Mở connection worker
             conn_worker = pg_hook.get_conn()
             cur_worker = conn_worker.cursor()
             
             try:
-                # Lấy danh sách bảng (đã được set snapshot bên trong hàm)
                 tables = get_public_tables(cur_worker, snapshot_id)
-                
-                # Loop qua từng bảng để dump
                 for table in tables:
                     stream_table_to_gcs(cur_worker, table, BUCKET_NAME, gcs_hook)
-                
                 conn_worker.commit()
                 return tables
-
             finally:
                 cur_worker.close()
                 conn_worker.close()
-
         finally:
-            # 4. Cleanup Replication (Giữ Slot, đóng kết nối)
             cur_repl.close()
             conn_repl.close()
 
-    @task
-    def create_external_tables_task(tables: list):
-        # Code tạo bảng BigQuery giữ nguyên
-        from google.cloud import bigquery
-        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
+    @task 
+    def ensure_dataset():
+        # MOVE CLIENT INSIDE TASK
         bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
         client = bq_hook.get_client(project_id=PROJECT_ID)
-
+        
         dataset_id = f"{PROJECT_ID}.{DATASET_NAME}"
         dataset = bigquery.Dataset(dataset_id)
         dataset.location = "US" 
-        
-        # exists_ok=True: Nếu có rồi thì thôi, không báo lỗi
         client.create_dataset(dataset, exists_ok=True)
         logging.info(f"Ensured dataset '{dataset_id}' exists.")
 
-        for table_name in tables:
-            # Create Snapshot Table
-            ext_cfg_csv = bigquery.ExternalConfig("CSV")
-            ext_cfg_csv.source_uris = [f"gs://{BUCKET_NAME}/{table_name}/snapshot/{table_name}.csv"]
-            ext_cfg_csv.autodetect = True
-            ext_cfg_csv.options.skip_leading_rows = 1
-            table_ref = bigquery.Table(f"{PROJECT_ID}.{DATASET_NAME}.{table_name}_snapshot_external")
-            table_ref.external_data_configuration = ext_cfg_csv
-            client.create_table(table_ref, exists_ok=True)
+    @task
+    def create_external_snapshot_tables_task(table_name: str):
+        # MOVE CLIENT INSIDE TASK & INPUT IS STRING (NOT LIST)
+        bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
+        client = bq_hook.get_client(project_id=PROJECT_ID)
 
-            # Create CDC Table
-            ext_cfg_json = bigquery.ExternalConfig("NEWLINE_DELIMITED_JSON")
-            ext_cfg_json.source_uris = [f"gs://{BUCKET_NAME}/{table_name}/cdc/*"]
-            ext_cfg_json.autodetect = True
-            ext_cfg_json.ignore_unknown_values = True
-            table_ref_cdc = bigquery.Table(f"{PROJECT_ID}.{DATASET_NAME}.{table_name}_cdc_external")
-            table_ref_cdc.external_data_configuration = ext_cfg_json
-            client.create_table(table_ref_cdc, exists_ok=True)
+        ext_cfg_csv = bigquery.ExternalConfig("CSV")
+        ext_cfg_csv.source_uris = [f"gs://{BUCKET_NAME}/{table_name}/snapshot/{table_name}.csv"]
+        ext_cfg_csv.autodetect = True
+        ext_cfg_csv.options.skip_leading_rows = 1
+        
+        table_ref = bigquery.Table(f"{PROJECT_ID}.{DATASET_NAME}.{table_name}_snapshot_external")
+        table_ref.external_data_configuration = ext_cfg_csv
+        client.create_table(table_ref, exists_ok=True)
+        logging.info(f"Created Snapshot Table for {table_name}")
+
+    @task
+    def create_external_cdc_tables_task(table_name: str):
+        # MOVE CLIENT INSIDE TASK & INPUT IS STRING (NOT LIST)
+        bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
+        client = bq_hook.get_client(project_id=PROJECT_ID)
+
+        ext_cfg_json = bigquery.ExternalConfig("NEWLINE_DELIMITED_JSON")
+        ext_cfg_json.source_uris = [f"gs://{BUCKET_NAME}/{table_name}/cdc/*"]
+        ext_cfg_json.autodetect = True
+        ext_cfg_json.ignore_unknown_values = True
+        
+        table_ref_cdc = bigquery.Table(f"{PROJECT_ID}.{DATASET_NAME}.{table_name}_cdc_external")
+        table_ref_cdc.external_data_configuration = ext_cfg_json
+        client.create_table(table_ref_cdc, exists_ok=True)
+        logging.info(f"Created CDC Table for {table_name}")
 
     # --- FLOW ---
-    table_list = db_snapshot_to_gcs_task()
-    create_external_tables_task(table_list)
+    
+    # 1. Chạy Snapshot và lấy danh sách bảng
+    tables = db_snapshot_to_gcs_task()
+    
+    # 2. Tạo Dataset (Chạy 1 lần)
+    init_dataset = ensure_dataset()
+    
+    # 3. Tạo bảng Snapshot (Parallel Mapping cho từng bảng)
+    # Lưu ý: snapshot task phải chạy xong dataset task
+    tables >> init_dataset
+    
+    snapshot_creation = create_external_snapshot_tables_task.expand(table_name=tables)
+    init_dataset >> snapshot_creation
+
+    # 4. Sensor: Đợi file CDC cho từng bảng
+    wait_for_cdc = GCSObjectsWithPrefixExistenceSensor.partial(
+        task_id='wait_for_cdc_files',
+        bucket=BUCKET_NAME,
+        google_cloud_conn_id=GCP_CONN_ID,
+        mode='reschedule',
+        poke_interval=180,
+        timeout=6000,
+        soft_fail=True
+    ).expand(
+        prefix=tables.map(lambda t: f"{t}/cdc/")
+    )
+
+    # 5. Tạo bảng CDC (Chạy sau khi Sensor hoàn tất)
+    # Ta map lại function create table với danh sách tables gốc
+    cdc_creation = create_external_cdc_tables_task.expand(table_name=tables)
+    
+    # Nối dây: Sensor xong -> Mới tạo bảng
+    # Lưu ý: Trong Airflow cơ bản, việc nối 2 mapped task như này sẽ tạo ra "Barrier"
+    # (Tức là đợi TOÀN BỘ sensor xong mới chạy TOÀN BỘ create task). 
+    # Nhưng nó an toàn và đúng logic bạn cần.
+    wait_for_cdc >> cdc_creation
 
 dag_instance = postgres_to_bigquery_pipeline_refactored()
