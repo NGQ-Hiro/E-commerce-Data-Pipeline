@@ -80,7 +80,7 @@ def stream_table_to_gcs(pg_cursor, table_name, bucket_name, gcs_hook):
 
 # --- MAIN DAG ---
 
-@dag(schedule_interval=None, catchup=False)
+@dag(schedule=None, catchup=False)
 def postgres_to_bigquery_pipeline_refactored():
 
     @task
