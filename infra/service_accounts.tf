@@ -12,3 +12,9 @@ resource "google_service_account" "postgres_sa" {
   display_name = "Postgres VM Service Account"
   description = "Used by Postgres VM to access Secret .env"
 }
+
+resource "google_service_account" "airflow_sa" {
+  account_id   = "airflow-sa"
+  display_name = "Airflow VM Service Account"
+  description = "Used by Airflow VM to access GCP resources"
+}

@@ -86,38 +86,46 @@ resource "google_compute_instance" "vm_debezium" {
   }
 }
 
+# --- VM 3: Airflow ---
+resource "google_compute_instance" "vm_airflow" {
+  name         = "vm-airflow"
+  machine_type = "e2-standard-2"
+  tags         = ["my-cluster"]
 
-# --- VM 2: Airflow & DBT ---
-# resource "google_compute_instance" "vm_airflow" {
-#   name         = "vm-airflow-dbt"
-#   machine_type = "e2-standard-2"
-#   tags         = ["my-cluster"]
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+      size  = 30
+    }
+  }
 
-#   boot_disk {
-#     initialize_params {
-#       image = "debian-cloud/debian-11"
-#       size  = 30
-#     }
-#   }
+  network_interface {
+    network = "default"
+    access_config {} # Cấp Public IP
+  }
 
-#   network_interface {
-#     network = "default"
-#     access_config {} # Cấp Public IP
-#   }
+  # Inject SSH Key
+  metadata = {
+    ssh-keys = "${local.ssh_user}:${file(local.public_key_path)}"
+  }
 
-#   # Inject SSH Key
-#   metadata = {
-#     ssh-keys = "${local.ssh_user}:${file(local.public_key_path)}"
-#   }
+  # metadata_startup_script = file("${path.module}/scripts/install_airflow_dbt.sh")
 
-#   metadata_startup_script = file("${path.module}/scripts/install_airflow_dbt.sh")
-# }
+  service_account {
+    email = google_service_account.airflow_sa.email
+    scopes = ["cloud-platform"]
+  }
+}
 
 # # --- Output: In ra lệnh SSH sẵn để copy ---
-# output "cmd_ssh_debezium" {
-#   value = "ssh -i C:\\.ssh\\gcloud ${local.ssh_user}@${google_compute_instance.vm_debezium.network_interface.0.access_config.0.nat_ip}"
-# }
+output "cmd_ssh_postgres" {
+  value = "ssh -i C:\\.ssh\\gcloud ${local.ssh_user}@${google_compute_instance.vm_postgres.network_interface.0.access_config.0.nat_ip}"
+}
 
-# output "cmd_ssh_airflow" {
-#   value = "ssh -i C:\\.ssh\\gcloud ${local.ssh_user}@${google_compute_instance.vm_airflow.network_interface.0.access_config.0.nat_ip}"
-# }
+output "cmd_ssh_debezium" {
+  value = "ssh -i C:\\.ssh\\gcloud ${local.ssh_user}@${google_compute_instance.vm_debezium.network_interface.0.access_config.0.nat_ip}"
+}
+
+output "cmd_ssh_airflow" {
+  value = "ssh -i C:\\.ssh\\gcloud ${local.ssh_user}@${google_compute_instance.vm_airflow.network_interface.0.access_config.0.nat_ip}"
+}
