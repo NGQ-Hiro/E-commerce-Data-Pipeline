@@ -1,0 +1,58 @@
+x-airflow-common: &airflow-common
+  image: apache/airflow:3.0.3
+  volumes:
+    - ./airflow:/opt/airflow
+    - /var/run/docker.sock:/var/run/docker.sock
+  env_file:
+    - airflow.env
+  networks:
+    - my-network
+  depends_on:
+    postgres:
+      condition: service_healthy
+    
+
+services:
+  postgres:
+    image: postgres:14.18
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_DB: airflow_db
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    networks:
+      - my-network
+    healthcheck:
+      # Kiểm tra kết nối bằng lệnh pg_isready với User và DB đã khai báo
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow_db"]
+      interval: 5s   # Kiểm tra mỗi 5s
+      timeout: 5s    # Timeout mỗi lần check
+      retries: 5     # Thử 5 lần thất bại thì coi là unhealthy
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: bash -c "airflow db migrate && airflow scheduler"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - 8080:8080
+    depends_on:
+      airflow-scheduler:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: airflow dag-processor
+    depends_on:
+      airflow-scheduler:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+networks:
+  my-network:
