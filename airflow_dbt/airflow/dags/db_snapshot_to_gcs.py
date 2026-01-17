@@ -184,7 +184,6 @@ def postgres_to_bigquery_pipeline_refactored():
 
     # --- FLOW ---
     table_list = db_snapshot_to_gcs_task()
-    create_dateset()
     create_external_tables_task(table_list)
 
 dag_instance = postgres_to_bigquery_pipeline_refactored()
