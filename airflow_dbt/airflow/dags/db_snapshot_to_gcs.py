@@ -148,13 +148,13 @@ def postgres_to_bigquery_pipeline_refactored():
             conn_repl.close()
 
     @task
-    def create_dateset():
+    def create_external_tables_task(tables: list):
+        # Code tạo bảng BigQuery giữ nguyên
         from google.cloud import bigquery
         from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
         bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
         client = bq_hook.get_client(project_id=PROJECT_ID)
 
-        # --- BƯỚC MỚI: TẠO DATASET NẾU CHƯA CÓ ---
         dataset_id = f"{PROJECT_ID}.{DATASET_NAME}"
         dataset = bigquery.Dataset(dataset_id)
         dataset.location = "US" 
@@ -162,14 +162,6 @@ def postgres_to_bigquery_pipeline_refactored():
         # exists_ok=True: Nếu có rồi thì thôi, không báo lỗi
         client.create_dataset(dataset, exists_ok=True)
         logging.info(f"Ensured dataset '{dataset_id}' exists.")
-
-    @task
-    def create_external_tables_task(tables: list):
-        # Code tạo bảng BigQuery giữ nguyên
-        from google.cloud import bigquery
-        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
-        bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
-        client = bq_hook.get_client(project_id=PROJECT_ID)
 
         for table_name in tables:
             # Create Snapshot Table
