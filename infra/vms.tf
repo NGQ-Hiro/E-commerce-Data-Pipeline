@@ -121,14 +121,14 @@ resource "google_compute_instance" "vm_airflow" {
 }
 
 # # --- Output: In ra lệnh SSH sẵn để copy ---
+output "cmd_ssh_airflow" {
+  value = "ssh -i ~/.ssh/gcloud ${local.ssh_user}@${google_compute_instance.vm_airflow.network_interface.0.access_config.0.nat_ip}"
+}
+
 output "cmd_ssh_postgres" {
   value = "ssh -i ~/.ssh/gcloud ${local.ssh_user}@${google_compute_instance.vm_postgres.network_interface.0.access_config.0.nat_ip}"
 }
 
 output "cmd_ssh_debezium" {
   value = "ssh -i ~/.ssh/gcloud ${local.ssh_user}@${google_compute_instance.vm_debezium.network_interface.0.access_config.0.nat_ip}"
-}
-
-output "cmd_ssh_airflow" {
-  value = "ssh -i ~/.ssh/gcloud ${local.ssh_user}@${google_compute_instance.vm_airflow.network_interface.0.access_config.0.nat_ip}"
 }
