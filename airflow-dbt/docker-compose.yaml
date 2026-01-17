@@ -1,16 +1,15 @@
 x-airflow-common: &airflow-common
-  image: apache/airflow:3.0.3
+  image: apache/airflow:3.0.3 # Ensure this tag exists/is correct for your needs
   volumes:
     - ./airflow:/opt/airflow
     - /var/run/docker.sock:/var/run/docker.sock
   env_file:
-    - airflow.env
+    - .env
   networks:
     - my-network
   depends_on:
     postgres:
       condition: service_healthy
-    
 
 services:
   postgres:
@@ -24,35 +23,58 @@ services:
     networks:
       - my-network
     healthcheck:
-      # Kiểm tra kết nối bằng lệnh pg_isready với User và DB đã khai báo
       test: ["CMD-SHELL", "pg_isready -U airflow -d airflow_db"]
-      interval: 5s   # Kiểm tra mỗi 5s
-      timeout: 5s    # Timeout mỗi lần check
-      retries: 5     # Thử 5 lần thất bại thì coi là unhealthy
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # 1. NEW SERVICE: Init Container to handle DB Migrations safely
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    entrypoint: >
+      bash -c "
+      echo 'waiting for postgres...' &&
+      airflow db migrate &&
+      airflow users create --username admin --password admin --firstname Peter --lastname Parker --role Admin --email spiderman@superhero.org || true
+      "
+    # This service runs once then stops successfully
 
   airflow-scheduler:
     <<: *airflow-common
-    command: bash -c "airflow db migrate && airflow scheduler"
+    # Removed 'db migrate' from here because 'airflow-init' handles it
+    command: airflow scheduler
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   airflow-webserver:
     <<: *airflow-common
-    command: api-server
+    # CHANGED: Standard command for UI is 'webserver'. 
+    # If you specifically need the execution api, use a separate service.
+    command: airflow webserver 
     ports:
       - 8080:8080
+    restart: always
     depends_on:
-      airflow-scheduler:
-        condition: service_started
       postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   airflow-dag-processor:
     <<: *airflow-common
     command: airflow dag-processor
+    restart: always
     depends_on:
-      airflow-scheduler:
-        condition: service_started
       postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
 networks:
   my-network:

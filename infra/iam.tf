@@ -33,7 +33,7 @@ resource "google_secret_manager_secret_iam_member" "airflow_secret_access" {
 
 locals {
   airflow_roles = [
-    # "roles/pubsub.editor",         # Quản lý Pub/Sub (Tạo topic, gửi tin)
+    "roles/pubsub.editor",         # Quản lý Pub/Sub (Tạo topic, gửi tin)
     "roles/storage.objectAdmin",   # Đọc/Ghi GCS
     "roles/bigquery.dataEditor",   # Sửa dữ liệu BigQuery
     "roles/bigquery.jobUser",      # Chạy Job BigQuery

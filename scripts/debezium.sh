@@ -15,7 +15,7 @@ echo ">>> Target: $PG_HOST:$PG_PORT"
 
 while ! timeout 1 bash -c "cat < /dev/null > /dev/tcp/$PG_HOST/$PG_PORT"; do
   echo "   [Wait] Postgres is not ready yet. Retrying in 2 seconds..."
-  sleep 2
+  sleep 5
 done
 
 echo ">>> ------------------------------------------------"
@@ -24,4 +24,4 @@ echo ">>> ------------------------------------------------"
 
 echo ">>> Starting Debezium..."
 sleep 10
-docker compose up -d --no-deps debezium
+docker compose up -d

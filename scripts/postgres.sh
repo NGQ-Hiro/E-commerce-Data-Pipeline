@@ -10,7 +10,7 @@ fi
 
 # Start Postgres
 echo ">>> Starting Postgres..."
-docker compose up -d --no-deps postgres
+docker compose up -d
 
 sleep 20
 
