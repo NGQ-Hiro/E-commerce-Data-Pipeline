@@ -204,11 +204,11 @@ def postgres_snapshot_cdc_to_bigquery_pipeline():
     # Step 1: Export DB snapshot to GCS and get list of ALL tables
     all_tables = db_snapshot_to_gcs_task()
     
-    # Step 2: Filter to only tables that need CDC processing
+    # Step 2a: Create external snapshot tables for filtered tables
+    snapshot_creation = create_external_snapshot_tables_task.expand(table_name=all_tables)
+
+    # Step 2b: Filter to only tables that need CDC processing
     cdc_tables = filter_tables_with_cdc(all_tables)
-    
-    # Step 3a: Create external snapshot tables for filtered tables
-    snapshot_creation = create_external_snapshot_tables_task.expand(table_name=cdc_tables)
     
     # Step 3b: Wait for CDC files for filtered tables (parallel with Step 3a)
     wait_for_cdc = GCSObjectsWithPrefixExistenceSensor.partial(
@@ -223,12 +223,12 @@ def postgres_snapshot_cdc_to_bigquery_pipeline():
         prefix=cdc_tables.map(lambda t: f"{t}/cdc/")
     )
     
-    # Step 4: Create external CDC tables (depends only on CDC files being ready)
+    # Step 4b: Create external CDC tables (depends only on CDC files being ready)
     cdc_creation = create_external_cdc_tables_task.expand(table_name=cdc_tables)
     
     # Define dependencies
-    all_tables >> cdc_tables >> [snapshot_creation, wait_for_cdc]
-    wait_for_cdc >> cdc_creation
+    all_tables >> [snapshot_creation, cdc_tables]
+    cdc_tables >> wait_for_cdc >> cdc_creation
 
 dag_instance = postgres_snapshot_cdc_to_bigquery_pipeline()
 
