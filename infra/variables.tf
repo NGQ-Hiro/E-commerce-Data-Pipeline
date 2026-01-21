@@ -39,8 +39,6 @@ variable "schema" {
 variable "tables" {
   type = set(string)
   default = [
-    "geolocation",
-    "products",
     "customers",
     "orders",
     "order_items",

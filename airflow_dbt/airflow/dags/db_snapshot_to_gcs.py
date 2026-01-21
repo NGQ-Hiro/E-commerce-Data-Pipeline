@@ -1,4 +1,3 @@
-import io
 import os
 import logging
 import psycopg2
@@ -12,15 +11,15 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from google.cloud import bigquery
 
 # --- CONFIGURATION ---
-GCP_CONN_ID = 'google_cloud_default'
-POSTGRES_CONN_ID = 'postgres_default'
-BUCKET_NAME = 'olist-ecommerce-bucket'
-PROJECT_ID = 'e-commerce-484010'
-DATASET_NAME = 'bronze'
-PUBLICATION_NAME = 'dbz_publication'
-SLOT_NAME = 'snap_shot'
+GCP_CONN_ID = os.getenv('GCP_CONN_ID', 'google_cloud_default')
+POSTGRES_CONN_ID = os.getenv('POSTGRES_CONN_ID', 'postgres_default')
+BUCKET_NAME = os.getenv('BUCKET_NAME', 'olist-ecommerce-bucket')
+PROJECT_ID = os.getenv('PROJECT_ID', 'e-commerce-484010')
+BRONZE = os.getenv('BRONZE', 'bronze')
+PUBLICATION_NAME = os.getenv('PUBLICATION_NAME', 'dbz_publication')
+SLOT_NAME = os.getenv('SLOT_NAME', 'snap_shot')
 
-# --- HELPER FUNCTIONS (Giữ nguyên) ---
+# --- HELPER FUNCTIONS ---
 def create_publication_if_not_exists(cursor, pub_name):
     try:
         cursor.execute(f"CREATE PUBLICATION {pub_name} FOR ALL TABLES;")
@@ -29,11 +28,12 @@ def create_publication_if_not_exists(cursor, pub_name):
         cursor.connection.rollback()
         logging.info(f"Publication {pub_name} already exists. Skipping.")
 
-def create_slot_and_get_snapshot(cursor, slot_name):
+def create_or_recreate_replication_slot(cursor, slot_name):
     create_sql = f"CREATE_REPLICATION_SLOT {slot_name} LOGICAL pgoutput EXPORT_SNAPSHOT;"
     try:
         cursor.execute(create_sql)
         result = cursor.fetchone()
+        # slot_name lsn(wal) snapshot_id
         return result[2]
     except psycopg2.errors.DuplicateObject:
         cursor.connection.rollback()
@@ -42,15 +42,10 @@ def create_slot_and_get_snapshot(cursor, slot_name):
         cursor.execute(create_sql)
         return cursor.fetchone()[2]
 
-# --- HELPER FUNCTIONS ---
-
-# 1. Hàm này chỉ lấy danh sách bảng (Không tự BEGIN transaction nữa)
 def get_public_tables(cursor):
-    # Lưu ý: Transaction đã được start ở bên ngoài (Main Task)
     cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
     return [row[0] for row in cursor.fetchall()]
 
-# 2. Sửa cú pháp COPY trong hàm này
 def stream_table_to_gcs(pg_cursor, table_name, bucket_name, gcs_hook):
     logging.info(f"Streaming table {table_name}...")
     temp_file_path = None
@@ -77,78 +72,69 @@ def stream_table_to_gcs(pg_cursor, table_name, bucket_name, gcs_hook):
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
-# --- MAIN DAG ---
-
 @dag(schedule=None, catchup=False)
-def postgres_to_bigquery_pipeline_refactored():
+def postgres_snapshot_cdc_to_bigquery_pipeline():
 
     @task
     def db_snapshot_to_gcs_task() -> list:
-        # 1. Setup Connections
-        pg_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
-        conn_args = pg_hook.get_connection(POSTGRES_CONN_ID)
-        gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
+        # 1. Setup connection hooks & retrieve credentials
+        postgres_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
+        postgres_conn_config = postgres_hook.get_connection(POSTGRES_CONN_ID)
+        gcs_storage_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
         
-        # Connection Replication
-        conn_repl = psycopg2.connect(
-            host=conn_args.host, user=conn_args.login, password=conn_args.password,
-            port=conn_args.port, dbname=conn_args.schema,
+        # 2. Create REPLICATION connection (manages snapshot & slot lifecycle)
+        replication_connection = psycopg2.connect(
+            host=postgres_conn_config.host, 
+            user=postgres_conn_config.login, 
+            password=postgres_conn_config.password,
+            port=postgres_conn_config.port, 
+            dbname=postgres_conn_config.schema,
             connection_factory=LogicalReplicationConnection
         )
-        cur_repl = conn_repl.cursor()
+        replication_cursor = replication_connection.cursor()
 
         try:
-            create_publication_if_not_exists(cur_repl, PUBLICATION_NAME)
-            snapshot_id = create_slot_and_get_snapshot(cur_repl, SLOT_NAME)
+            # 3. Setup replication infrastructure (publication + slot)
+            create_publication_if_not_exists(replication_cursor, PUBLICATION_NAME)
+            snapshot_id = create_or_recreate_replication_slot(replication_cursor, SLOT_NAME)
 
-            # --- Connection Worker (Nơi sửa lỗi chính) ---
-            conn_worker = pg_hook.get_conn()
+            # 4. Create DATA EXPORT connection (inherits snapshot from replication_connection)
+            snapshot_export_connection = postgres_hook.get_conn()
             
-            # [FIX QUAN TRỌNG NHẤT]: Tắt Auto-transaction
-            # Nếu không có dòng này, copy_expert sẽ xung đột với transaction ngầm
-            conn_worker.autocommit = True 
+            # CRITICAL: Disable autocommit to manage transactions manually
+            # (prevents copy_expert from conflicting with implicit transactions)
+            snapshot_export_connection.autocommit = True 
             
-            cur_worker = conn_worker.cursor()
+            export_cursor = snapshot_export_connection.cursor()
             
             try:
-                # 2. Tự quản lý Transaction thủ công
-                cur_worker.execute("BEGIN ISOLATION LEVEL REPEATABLE READ;")
-                cur_worker.execute(f"SET TRANSACTION SNAPSHOT '{snapshot_id}';")
+                # 5. Begin transaction at snapshot isolation level
+                export_cursor.execute("BEGIN ISOLATION LEVEL REPEATABLE READ;")
+                export_cursor.execute(f"SET TRANSACTION SNAPSHOT '{snapshot_id}';")
                 
-                # 3. Lấy danh sách bảng (trong cùng transaction này)
-                tables = get_public_tables(cur_worker)
+                # 6. Query all tables in public schema (uses snapshot isolation)
+                tables = get_public_tables(export_cursor)
                 
-                # 4. Loop dump
+                # 7. Export each table as CSV to GCS (all at same point-in-time)
                 for table in tables:
-                    stream_table_to_gcs(cur_worker, table, BUCKET_NAME, gcs_hook)
+                    stream_table_to_gcs(export_cursor, table, BUCKET_NAME, gcs_storage_hook)
                 
-                # 5. Commit thủ công
-                cur_worker.execute("COMMIT;")
+                # 8. Commit transaction
+                export_cursor.execute("COMMIT;")
+                logging.info(f"Successfully exported {len(tables)} tables to GCS")
                 return tables
 
             except Exception as e:
-                logging.error(f"Error during dump: {e}")
-                cur_worker.execute("ROLLBACK;") # Rollback nếu lỗi
+                logging.error(f"Error during snapshot export: {e}")
+                export_cursor.execute("ROLLBACK;")
                 raise e
             finally:
-                cur_worker.close()
-                conn_worker.close()
+                export_cursor.close()
+                snapshot_export_connection.close()
 
         finally:
-            cur_repl.close()
-            conn_repl.close()
-
-    @task 
-    def ensure_dataset():
-        # MOVE CLIENT INSIDE TASK
-        bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
-        client = bq_hook.get_client(project_id=PROJECT_ID)
-        
-        dataset_id = f"{PROJECT_ID}.{DATASET_NAME}"
-        dataset = bigquery.Dataset(dataset_id)
-        dataset.location = "US" 
-        client.create_dataset(dataset, exists_ok=True)
-        logging.info(f"Ensured dataset '{dataset_id}' exists.")
+            replication_cursor.close()
+            replication_connection.close()
 
     @task
     def create_external_snapshot_tables_task(table_name: str):
@@ -156,12 +142,17 @@ def postgres_to_bigquery_pipeline_refactored():
         bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
         client = bq_hook.get_client(project_id=PROJECT_ID)
 
+        # Config format external table
         ext_cfg_csv = bigquery.ExternalConfig("CSV")
         ext_cfg_csv.source_uris = [f"gs://{BUCKET_NAME}/{table_name}/snapshot/{table_name}.csv"]
         ext_cfg_csv.autodetect = True
         ext_cfg_csv.options.skip_leading_rows = 1
+        # Optional: Uncomment below if needed for special cases like order_reviews
+        ext_cfg_csv.options.field_delimiter = ','
+        ext_cfg_csv.options.quote_character = '"'
+        ext_cfg_csv.options.allow_quoted_newlines = True
         
-        table_ref = bigquery.Table(f"{PROJECT_ID}.{DATASET_NAME}.{table_name}_snapshot_external")
+        table_ref = bigquery.Table(f"{PROJECT_ID}.{BRONZE}.{table_name}_snapshot_external")
         table_ref.external_data_configuration = ext_cfg_csv
         client.create_table(table_ref, exists_ok=True)
         logging.info(f"Created Snapshot Table for {table_name}")
@@ -172,32 +163,54 @@ def postgres_to_bigquery_pipeline_refactored():
         bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
         client = bq_hook.get_client(project_id=PROJECT_ID)
 
+        # Configuration options for NEWLINE_DELIMITED_JSON external table (CDC events):
+        # 1 file have multiple json cdc events
         ext_cfg_json = bigquery.ExternalConfig("NEWLINE_DELIMITED_JSON")
         ext_cfg_json.source_uris = [f"gs://{BUCKET_NAME}/{table_name}/cdc/*"]
         ext_cfg_json.autodetect = True
         ext_cfg_json.ignore_unknown_values = True
         
-        table_ref_cdc = bigquery.Table(f"{PROJECT_ID}.{DATASET_NAME}.{table_name}_cdc_external")
+        # Define partition columns for time-series CDC data
+        partition_columns = [
+            bigquery.SchemaField("year", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("month", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("day", "INT64", mode="NULLABLE"),
+        ]
+        ext_cfg_json.schema = partition_columns
+        
+        table_ref_cdc = bigquery.Table(f"{PROJECT_ID}.{BRONZE}.{table_name}_cdc_external")
         table_ref_cdc.external_data_configuration = ext_cfg_json
+        # Apply clustering on partition columns for better query performance
+        table_ref_cdc.clustering_fields = ["year", "month", "day"]
         client.create_table(table_ref_cdc, exists_ok=True)
-        logging.info(f"Created CDC Table for {table_name}")
+        logging.info(f"Created CDC Table for {table_name} with partitions (year, month, day)")
+
+    @task
+    def filter_tables_with_cdc(all_tables: list) -> list:
+        """Filter tables that need CDC (only these tables will be processed)"""
+        # Define which tables need CDC processing
+        filtered_tables = [
+            "customers",
+            "orders",
+            "order_items",
+            "sellers",
+            "payments",
+            "order_reviews"
+        ]
+        logging.info(f"Filtered {len(filtered_tables)} tables for CDC processing out of {len(all_tables)} total tables")
+        return filtered_tables
 
     # --- FLOW ---
+    # Step 1: Export DB snapshot to GCS and get list of ALL tables
+    all_tables = db_snapshot_to_gcs_task()
     
-    # 1. Chạy Snapshot và lấy danh sách bảng
-    tables = db_snapshot_to_gcs_task()
+    # Step 2: Filter to only tables that need CDC processing
+    cdc_tables = filter_tables_with_cdc(all_tables)
     
-    # 2. Tạo Dataset (Chạy 1 lần)
-    init_dataset = ensure_dataset()
+    # Step 3a: Create external snapshot tables for filtered tables
+    snapshot_creation = create_external_snapshot_tables_task.expand(table_name=cdc_tables)
     
-    # 3. Tạo bảng Snapshot (Parallel Mapping cho từng bảng)
-    # Lưu ý: snapshot task phải chạy xong dataset task
-    tables >> init_dataset
-    
-    snapshot_creation = create_external_snapshot_tables_task.expand(table_name=tables)
-    init_dataset >> snapshot_creation
-
-    # 4. Sensor: Đợi file CDC cho từng bảng
+    # Step 3b: Wait for CDC files for filtered tables (parallel with Step 3a)
     wait_for_cdc = GCSObjectsWithPrefixExistenceSensor.partial(
         task_id='wait_for_cdc_files',
         bucket=BUCKET_NAME,
@@ -207,17 +220,16 @@ def postgres_to_bigquery_pipeline_refactored():
         timeout=6000,
         soft_fail=True
     ).expand(
-        prefix=tables.map(lambda t: f"{t}/cdc/")
+        prefix=cdc_tables.map(lambda t: f"{t}/cdc/")
     )
-
-    # 5. Tạo bảng CDC (Chạy sau khi Sensor hoàn tất)
-    # Ta map lại function create table với danh sách tables gốc
-    cdc_creation = create_external_cdc_tables_task.expand(table_name=tables)
     
-    # Nối dây: Sensor xong -> Mới tạo bảng
-    # Lưu ý: Trong Airflow cơ bản, việc nối 2 mapped task như này sẽ tạo ra "Barrier"
-    # (Tức là đợi TOÀN BỘ sensor xong mới chạy TOÀN BỘ create task). 
-    # Nhưng nó an toàn và đúng logic bạn cần.
+    # Step 4: Create external CDC tables (depends only on CDC files being ready)
+    cdc_creation = create_external_cdc_tables_task.expand(table_name=cdc_tables)
+    
+    # Define dependencies
+    all_tables >> cdc_tables >> [snapshot_creation, wait_for_cdc]
     wait_for_cdc >> cdc_creation
 
-dag_instance = postgres_to_bigquery_pipeline_refactored()
+dag_instance = postgres_snapshot_cdc_to_bigquery_pipeline()
+
+# db ---- snapshot ----> GCS --->

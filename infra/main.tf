@@ -14,20 +14,20 @@ terraform {
 
 provider "google" {
   project     = "e-commerce-484010"
-  region      = "us-central1"
+  region      = var.region
   credentials = "gcp-terraform-key.json" # This is your Terraform Admin key
 }
 
 provider "google-beta" {
   project     = "e-commerce-484010"
-  region      = "us-central1"
+  region      = var.region
   credentials = "gcp-terraform-key.json" # MUST match the key above
 }
 
 # --- Your Existing Bucket ---
 resource "google_storage_bucket" "my_bucket" {
   name                        = var.bucket_name
-  location                    = "US"
+  location                    = var.region
   force_destroy               = true
   uniform_bucket_level_access = true
 }
@@ -57,9 +57,8 @@ resource "google_pubsub_subscription" "cdc_gcs_subscriptions" {
   cloud_storage_config {
     bucket = var.bucket_name
 
-    filename_prefix = "${each.key}/cdc/"
+    filename_prefix = "${each.key}/cdc/year=/month=/day=/"
     filename_suffix = ".json"
-    # filename_datetime_format = "YYYY/MM/DD/"
     filename_datetime_format = "YYYY/MM/DD/hh_mm_ss"
 
     max_duration = "300s"
@@ -74,3 +73,18 @@ resource "google_pubsub_subscription" "cdc_gcs_subscriptions" {
   ]
 }
 
+# Create dataset 
+resource "google_bigquery_dataset" "e-commerce-dataset-bronze" {
+  dataset_id = "e_commerce_dataset_bronze"
+  location   = var.region
+}
+
+resource "google_bigquery_dataset" "e-commerce-dataset-silver" {
+  dataset_id = "e_commerce_dataset_silver"
+  location   = var.region
+}
+
+resource "google_bigquery_dataset" "e-commerce-dataset-gold" {
+  dataset_id = "e_commerce_dataset_gold"
+  location   = var.region
+}
