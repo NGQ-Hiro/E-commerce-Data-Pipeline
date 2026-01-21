@@ -157,6 +157,7 @@ def postgres_snapshot_cdc_to_bigquery_pipeline():
         client.create_table(table_ref, exists_ok=True)
         logging.info(f"Created Snapshot Table for {table_name}")
 
+    @task
     def create_external_cdc_tables_task(table_name: str):
         bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
         client = bq_hook.get_client(project_id=PROJECT_ID)

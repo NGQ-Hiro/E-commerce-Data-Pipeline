@@ -79,14 +79,17 @@ resource "google_pubsub_subscription" "cdc_gcs_subscriptions" {
 resource "google_bigquery_dataset" "e-commerce-dataset-bronze" {
   dataset_id = "e_commerce_dataset_bronze"
   location   = var.region
+  delete_contents_on_destroy = true
 }
 
 resource "google_bigquery_dataset" "e-commerce-dataset-silver" {
   dataset_id = "e_commerce_dataset_silver"
   location   = var.region
+  delete_contents_on_destroy = true
 }
 
 resource "google_bigquery_dataset" "e-commerce-dataset-gold" {
   dataset_id = "e_commerce_dataset_gold"
   location   = var.region
+  delete_contents_on_destroy = true
 }
