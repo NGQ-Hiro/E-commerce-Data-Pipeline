@@ -57,9 +57,11 @@ resource "google_pubsub_subscription" "cdc_gcs_subscriptions" {
   cloud_storage_config {
     bucket = var.bucket_name
 
-    filename_prefix = "${each.key}/cdc/year=/month=/day=/"
+    # filename_prefix = "${each.key}/cdc/year=/month=/day=/"
+    filename_prefix = "${each.key}/cdc/dt="
+    filename_datetime_format = "YYYY-MM-DD/hh_mm_ss"
     filename_suffix = ".json"
-    filename_datetime_format = "YYYY/MM/DD/hh_mm_ss"
+    
 
     max_duration = "300s"
     max_bytes = 104857600 

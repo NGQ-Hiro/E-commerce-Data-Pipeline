@@ -157,33 +157,39 @@ def postgres_snapshot_cdc_to_bigquery_pipeline():
         client.create_table(table_ref, exists_ok=True)
         logging.info(f"Created Snapshot Table for {table_name}")
 
-    @task
     def create_external_cdc_tables_task(table_name: str):
-        # MOVE CLIENT INSIDE TASK & INPUT IS STRING (NOT LIST)
         bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID)
         client = bq_hook.get_client(project_id=PROJECT_ID)
 
-        # Configuration options for NEWLINE_DELIMITED_JSON external table (CDC events):
-        # 1 file have multiple json cdc events
+        # 1. Cấu hình External Table
         ext_cfg_json = bigquery.ExternalConfig("NEWLINE_DELIMITED_JSON")
+        
+        # Quét tất cả file con trong thư mục cdc
+        # Lưu ý: Pub/Sub ghi vào cdc/dt=2026-01-21/...
         ext_cfg_json.source_uris = [f"gs://{BUCKET_NAME}/{table_name}/cdc/*"]
         ext_cfg_json.autodetect = True
         ext_cfg_json.ignore_unknown_values = True
         
-        # Define partition columns for time-series CDC data
-        partition_columns = [
-            bigquery.SchemaField("year", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("month", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("day", "INT64", mode="NULLABLE"),
-        ]
-        ext_cfg_json.schema = partition_columns
+        # 2. Cấu hình Hive Partitioning (QUAN TRỌNG)
+        hive_partitioning_opts = bigquery.HivePartitioningOptions()
         
+        # Dùng AUTO vì file có dạng chuẩn key=value ('dt=YYYY-MM-DD')
+        # BigQuery sẽ tự hiểu đây là Partition Key mà không cần define Schema thủ công
+        hive_partitioning_opts.mode = "AUTO"
+        
+        # Chỉ định thư mục gốc để BigQuery biết bắt đầu quét partition từ đâu
+        hive_partitioning_opts.source_uri_prefix = f"gs://{BUCKET_NAME}/{table_name}/cdc"
+        hive_partitioning_opts.require_partition_filter = False
+        
+        # Gán option vào config
+        ext_cfg_json.hive_partitioning = hive_partitioning_opts
+        
+        # 3. Tạo Table Reference
         table_ref_cdc = bigquery.Table(f"{PROJECT_ID}.{BRONZE}.{table_name}_cdc_external")
         table_ref_cdc.external_data_configuration = ext_cfg_json
-        # Apply clustering on partition columns for better query performance
-        table_ref_cdc.clustering_fields = ["year", "month", "day"]
+
+        # 4. Gọi lệnh tạo bảng
         client.create_table(table_ref_cdc, exists_ok=True)
-        logging.info(f"Created CDC Table for {table_name} with partitions (year, month, day)")
 
     @task
     def filter_tables_with_cdc(all_tables: list) -> list:
