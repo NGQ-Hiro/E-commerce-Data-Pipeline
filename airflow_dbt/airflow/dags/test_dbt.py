@@ -28,7 +28,7 @@ check_dbt_version = DockerOperator(
     working_dir='/usr/app',
     auto_remove='success',
     docker_url='unix://var/run/docker.sock',
-    network_mode='my-network',
+    network_mode='airflow_dbt_my-network',
     dag=dag,
 )
 
@@ -40,7 +40,7 @@ dbt_debug = DockerOperator(
     working_dir='/usr/app',
     auto_remove='success',
     docker_url='unix://var/run/docker.sock',
-    network_mode='my-network',
+    network_mode='airflow_dbt_my-network',
     mounts=[
         Mount(source='/home/hieu/E-commerce-Data-Pipeline/airflow_dbt/dbt/e_commerce', 
               target='/usr/app', 
@@ -60,7 +60,7 @@ dbt_run = DockerOperator(
     working_dir='/usr/app',
     auto_remove='success',
     docker_url='unix://var/run/docker.sock',
-    network_mode='my-network',
+    network_mode='airflow_dbt_my-network',
     mounts=[
         Mount(source='/home/hieu/E-commerce-Data-Pipeline/airflow_dbt/dbt/e_commerce', 
               target='/usr/app', 
