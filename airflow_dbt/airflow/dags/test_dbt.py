@@ -16,7 +16,6 @@ dag = DAG(
     'test_dbt_bigquery_run',
     default_args=default_args,
     description='Test dbt BigQuery run',
-    schedule_interval=None,  # Manual trigger only
     catchup=False,
     tags=['test', 'dbt', 'bigquery'],
 )
