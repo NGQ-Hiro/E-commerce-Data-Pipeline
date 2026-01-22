@@ -7,6 +7,8 @@ x-airflow-common: &airflow-common
   #   - .env
   networks:
     - my-network
+  group_add:
+    - '1001'
   depends_on:
     postgres:
       condition: service_healthy
