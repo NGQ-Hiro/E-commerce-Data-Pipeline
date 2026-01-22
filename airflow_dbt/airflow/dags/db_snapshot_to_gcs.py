@@ -207,12 +207,22 @@ def postgres_snapshot_cdc_to_bigquery_pipeline():
         logging.info(f"Filtered {len(filtered_tables)} tables for CDC processing out of {len(all_tables)} total tables")
         return filtered_tables
 
+    # @task
+    # def create_table_bigquery(table_name: list):
+    #     import utils
+    #     from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator
+        
+    #     pass
+
     # --- FLOW ---
     # Step 1: Export DB snapshot to GCS and get list of ALL tables
     all_tables = db_snapshot_to_gcs_task()
     
     # Step 2a: Create external snapshot tables for filtered tables
     snapshot_creation = create_external_snapshot_tables_task.expand(table_name=all_tables)
+
+    # Step 3a: Create table in bigquery
+    # bigquery_table = create_table_bigquery.expand(table_name=all_tables)
 
     # Step 2b: Filter to only tables that need CDC processing
     cdc_tables = filter_tables_with_cdc(all_tables)

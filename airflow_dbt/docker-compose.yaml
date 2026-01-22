@@ -3,8 +3,8 @@ x-airflow-common: &airflow-common
   volumes:
     - ./airflow:/opt/airflow
     - /var/run/docker.sock:/var/run/docker.sock
-  env_file:
-    - .env
+  # env_file:
+  #   - .env
   networks:
     - my-network
   depends_on:
@@ -75,6 +75,16 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+
+  # dbt:
+  #   image: ghcr.io/dbt-labs/dbt-bigquery:1.9.latest
+  #   volumes:
+  #     - ./dbt/e_commerce:/usr/app
+  #     - ./dbt:/root/.dbt
+  #   working_dir: /usr/app
+  #   networks:
+  #     - my-network
+  #   command: debug
 
 networks:
   my-network:
