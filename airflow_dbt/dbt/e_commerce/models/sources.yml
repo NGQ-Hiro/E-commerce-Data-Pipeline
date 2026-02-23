@@ -1,0 +1,41 @@
+sources:
+  - name: bronze
+    description: Raw CDC and snapshot external tables from GCS (Debezium pipeline)
+    schema: e_commerce_dataset_bronze
+
+    tables:
+      # Customers
+      - name: customers_cdc_external
+      - name: customers_snapshot_external
+
+      # Geolocation
+      - name: geolocation_snapshot_external
+
+      # Orders
+      - name: orders_cdc_external
+      - name: orders_snapshot_external
+
+      # Order Items
+      - name: order_items_cdc_external
+      - name: order_items_snapshot_external
+
+      # Order Reviews
+      - name: order_reviews_cdc_external
+      - name: order_reviews_snapshot_external
+
+      # Payments
+      - name: payments_cdc_external
+      - name: payments_snapshot_external
+
+      # Products
+      - name: products_snapshot_external
+      - name: product_category_name_translation_snapshot_external
+
+      # Sellers
+      - name: sellers_cdc_external
+      - name: sellers_snapshot_external
+
+  - name: silver
+    schema: e_commerce_dataset_silver
+  - name: gold
+    schema: e_commerce_dataset_gold

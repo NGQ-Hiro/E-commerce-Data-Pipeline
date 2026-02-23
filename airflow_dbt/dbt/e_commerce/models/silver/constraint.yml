@@ -1,0 +1,239 @@
+version: 2
+
+models:
+
+  - name: geolocations
+    config:
+      contract:
+        enforced: true
+
+    constraints:
+      - type: primary_key
+        columns: [geolocation_zip_code_prefix]    
+
+    columns:
+      - name: geolocation_zip_code_prefix
+        data_type: INT
+
+      - name: latitude
+        data_type: FLOAT64
+
+      - name: longtitude
+        data_type: FLOAT64
+
+      - name: city
+        data_type: STRING
+
+      - name: state
+        data_type: STRING
+
+  - name: sellers
+    config:
+      contract:
+        enforced: true
+    
+    constraints:
+      - type: primary_key
+        columns: [seller_id]
+
+    columns:
+      - name: seller_id
+        data_type: STRING
+
+      - name: seller_zip_code_prefix
+        data_type: INT
+
+      - name: seller_city
+        data_type: STRING
+
+      - name: seller_state
+        data_type: STRING
+      
+      - name: cdc_dt
+        data_type: DATE
+
+  # - name: customers
+  #   config:
+  #     contract:
+  #       enforced: true
+    
+  #   constraints:
+  #     - type: primary_key
+  #       columns: [customer_id]
+
+  #   columns:
+  #     - name: customer_id
+  #       data_type: STRING
+
+  #     - name: customer_unique_id
+  #       data_type: STRING
+
+  #     - name: customer_zip_code_prefix
+  #       data_type: INT
+
+  #     - name: customer_city
+  #       data_type: STRING
+
+  #     - name: customer_state
+  #       data_type: STRING
+
+  #     - name: cdc_dt
+  #       data_type: DATE
+
+  - name: products
+    config:
+      contract:
+        enforced: true
+    
+    constraints:
+      - type: primary_key
+        columns: [product_id]
+
+    columns:
+      - name: product_id
+        data_type: STRING
+
+      - name: product_category_name
+        data_type: STRING
+
+      - name: product_name_length
+        data_type: INT
+
+      - name: product_description_length
+        data_type: INT
+
+      - name: product_photos_qty
+        data_type: INT
+
+      - name: product_weight_g
+        data_type: INT
+
+      - name: product_length_cm
+        data_type: INT
+
+      - name: product_height_cm
+        data_type: INT
+
+      - name: product_width_cm
+        data_type: INT
+
+  - name: orders
+    config:
+      contract:
+        enforced: true
+    
+    constraints:
+      - type: primary_key
+        columns: [order_id]
+
+    columns:
+      - name: order_id
+        data_type: STRING
+
+      - name: customer_id
+        data_type: STRING
+
+      - name: order_status
+        data_type: STRING
+
+      - name: order_purchase_timestamp
+        data_type: TIMESTAMP
+
+      - name: order_approved_at
+        data_type: TIMESTAMP
+
+      - name: order_delivered_carrier_date
+        data_type: TIMESTAMP
+
+      - name: order_delivered_customer_date
+        data_type: TIMESTAMP
+
+      - name: order_estimated_delivery_date
+        data_type: TIMESTAMP
+
+      - name: cdc_dt
+        data_type: DATE
+
+  - name: order_items
+    config:
+      contract:
+        enforced: true
+    
+    columns:
+      - name: order_id
+        data_type: STRING
+
+      - name: order_item_id
+        data_type: INT
+
+      - name: product_id
+        data_type: STRING
+
+      - name: seller_id
+        data_type: STRING
+
+      - name: shipping_limit_date
+        data_type: TIMESTAMP
+
+      - name: price
+        data_type: FLOAT64
+
+      - name: freight_value
+        data_type: FLOAT64
+
+      - name: cdc_dt
+        data_type: DATE
+
+  - name: payments
+    config:
+      contract:
+        enforced: true
+    
+    columns:
+      - name: order_id
+        data_type: STRING
+
+      - name: payment_sequential
+        data_type: INT
+
+      - name: payment_type
+        data_type: STRING
+
+      - name: payment_installments
+        data_type: INT
+
+      - name: payment_value
+        data_type: FLOAT64
+
+      - name: cdc_dt
+        data_type: DATE
+
+  - name: order_reviews
+    config:
+      contract:
+        enforced: true
+    
+    columns:
+      - name: review_id
+        data_type: STRING
+
+      - name: order_id
+        data_type: STRING
+
+      - name: review_score
+        data_type: INT
+
+      - name: review_comment_title
+        data_type: STRING
+
+      - name: review_comment_message
+        data_type: STRING
+
+      - name: review_creation_date
+        data_type: TIMESTAMP
+
+      - name: review_answer_timestamp
+        data_type: TIMESTAMP
+
+      - name: cdc_dt
+        data_type: DATE

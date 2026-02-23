@@ -36,9 +36,11 @@ models:
       +materialized: view
 
     silver:
+      +tags: ['silver']
       +schema: e_commerce_dataset_silver
       +materialized: table
 
     gold:
+      +tags: ['gold']
       +schema: e_commerce_dataset_gold
       +materialized: table
