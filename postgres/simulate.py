@@ -69,30 +69,54 @@ def get_product_price(cur: cursor.Cursor, product_id):
 # --- ENTITY MANAGEMENT ---
 
 def prepare_customer_for_order(cur: cursor.Cursor):
-    new_cust_id = uuid.uuid4().hex
     is_returning = random.random() < 0.85
     
-    existing_user = None
+    # Try to reuse existing customer (85% chance)
     if is_returning:
-        cur.execute(f"SELECT customer_unique_id, customer_zip_code_prefix, customer_city, customer_state FROM {TBL_CUST} TABLESAMPLE SYSTEM (1) LIMIT 1")
-        existing_user = cur.fetchone()
-
-    if existing_user:
-        u_id, zip_code, city, state = existing_user
-    else:
+        cur.execute(f"SELECT customer_id FROM {TBL_CUST} TABLESAMPLE SYSTEM (1) LIMIT 1")
+        existing = cur.fetchone()
+        if existing:
+            return existing[0]  # REUSE existing customer_id, no INSERT
+    
+    # Create NEW customer only when needed (15% new customers)
+    # Check for UUID collision (defensive programming)
+    while True:
+        new_cust_id = uuid.uuid4().hex
         u_id = uuid.uuid4().hex
-        zip_code, city, state = get_random_geo_from_db(cur)
-
+        
+        # Check if customer_id already exists (collision check)
+        cur.execute(f"SELECT 1 FROM {TBL_CUST} WHERE customer_id = %s", (new_cust_id,))
+        if not cur.fetchone():  # UUID not found, safe to use
+            break
+        # If collision (extremely rare), loop and generate new UUID
+        print(f"⚠️  UUID collision detected! Retrying...")
+    
+    zip_code, city, state = get_random_geo_from_db(cur)
+    
     sql = f"INSERT INTO {TBL_CUST} (customer_id, customer_unique_id, customer_zip_code_prefix, customer_city, customer_state) VALUES (%s, %s, %s, %s, %s)"
     cur.execute(sql, (new_cust_id, u_id, zip_code, city, state))
     return new_cust_id
 
 def get_or_create_seller(cur: cursor.Cursor):
-    if random.random() < 0.95:
-        s_id = get_random_id(cur, TBL_SELLER, "seller_id")
-        if s_id: return s_id
-
-    s_id = uuid.uuid4().hex
+    # Try to reuse existing seller (99% chance)
+    if random.random() < 0.99:
+        cur.execute(f"SELECT seller_id FROM {TBL_SELLER} TABLESAMPLE SYSTEM (1) LIMIT 1")
+        existing = cur.fetchone()
+        if existing:
+            return existing[0]  # REUSE existing seller_id, no INSERT
+    
+    # Create NEW seller only when needed (1% new sellers)
+    # Check for UUID collision (defensive programming)
+    while True:
+        s_id = uuid.uuid4().hex
+        
+        # Check if seller_id already exists (collision check)
+        cur.execute(f"SELECT 1 FROM {TBL_SELLER} WHERE seller_id = %s", (s_id,))
+        if not cur.fetchone():  # UUID not found, safe to use
+            break
+        # If collision (extremely rare), loop and generate new UUID
+        print(f"⚠️  Seller UUID collision detected! Retrying...")
+    
     zip_code, city, state = get_random_geo_from_db(cur)
     cur.execute(f"INSERT INTO {TBL_SELLER} (seller_id, seller_zip_code_prefix, seller_city, seller_state) VALUES (%s, %s, %s, %s)", 
                 (s_id, zip_code, city, state))
@@ -129,7 +153,14 @@ def create_transaction(conn):
 
             # B. Insert Order
             cust_id = prepare_customer_for_order(cur)
-            order_id = uuid.uuid4().hex
+            
+            # Generate unique order_id (with collision check)
+            while True:
+                order_id = uuid.uuid4().hex
+                cur.execute(f"SELECT 1 FROM {TBL_ORDERS} WHERE order_id = %s", (order_id,))
+                if not cur.fetchone():  # UUID not found, safe to use
+                    break
+                print(f"⚠️  Order UUID collision detected! Retrying...")
             
             sql = f"""INSERT INTO {TBL_ORDERS} 
                       (order_id, customer_id, order_status, order_purchase_timestamp, order_approved_at, 
@@ -173,10 +204,17 @@ def create_transaction(conn):
 # --- 3. LIFECYCLE UPDATES ---
 
 def create_review(cur, order_id):
-    # Only create review if lucky (60% chance no review)
+    # Only create review if lucky (40% chance to create review)
     if random.random() > 0.40: return
     
-    rev_id = uuid.uuid4().hex
+    # Generate unique review_id (with collision check)
+    while True:
+        rev_id = uuid.uuid4().hex
+        cur.execute(f"SELECT 1 FROM {TBL_REVIEWS} WHERE review_id = %s", (rev_id,))
+        if not cur.fetchone():  # UUID not found, safe to use
+            break
+        print(f"⚠️  Review UUID collision detected! Retrying...")
+    
     score = random.choices([5, 4, 3, 2, 1], weights=[50, 20, 10, 10, 10])[0]
     title = fake.sentence(nb_words=3) if random.random() > 0.5 else None
     msg = fake.text(max_nb_chars=100) if random.random() > 0.3 else None
@@ -185,6 +223,72 @@ def create_review(cur, order_id):
     cur.execute(f"INSERT INTO {TBL_REVIEWS} (review_id, order_id, review_score, review_comment_title, review_comment_message, review_creation_date, review_answer_timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
                 (rev_id, order_id, score, title, msg, now, now + timedelta(hours=2)))
     print(f"   ⭐ Review added for {order_id[:8]}")
+
+def scenario_update_location(conn: psycopg.Connection):
+    """Update a customer or seller location (triggers CDC SCD Type 2 change)"""
+    try:
+        with conn.transaction():
+            cur = conn.cursor()
+            
+            # Decide whether to update customer (80%) or seller (20%)
+            update_seller = random.random() < 0.1
+            
+            if update_seller:
+                # Update seller location
+                cur.execute(f"SELECT seller_id FROM {TBL_SELLER} TABLESAMPLE SYSTEM (1) LIMIT 1")
+                res = cur.fetchone()
+                if not res: return
+                
+                seller_id = res[0]
+                
+                # Get new random location (different from current)
+                while True:
+                    new_zip, new_city, new_state = get_random_geo_from_db(cur)
+                    # Check if location is different from current
+                    cur.execute(f"SELECT seller_zip_code_prefix, seller_city, seller_state FROM {TBL_SELLER} WHERE seller_id = %s", (seller_id,))
+                    current = cur.fetchone()
+                    if current and (current[0] != new_zip or current[1] != new_city or current[2] != new_state):
+                        break  # Found different location
+                
+                # UPDATE triggers CDC event
+                cur.execute(f"""UPDATE {TBL_SELLER} 
+                                SET seller_zip_code_prefix = %s, 
+                                    seller_city = %s, 
+                                    seller_state = %s 
+                                WHERE seller_id = %s""", 
+                            (new_zip, new_city, new_state, seller_id))
+                
+                print(f"📦 [SELLER LOCATION] Seller {seller_id[:8]} relocated to {new_city}, {new_state}")
+            else:
+                # Update customer location (default 80% probability)
+                cur.execute(f"SELECT customer_id FROM {TBL_CUST} TABLESAMPLE SYSTEM (1) LIMIT 1")
+                res = cur.fetchone()
+                if not res: return
+                
+                cust_id = res[0]
+                
+                # Get new random location (different from current)
+                while True:
+                    new_zip, new_city, new_state = get_random_geo_from_db(cur)
+                    # Check if location is different from current
+                    cur.execute(f"SELECT customer_zip_code_prefix, customer_city, customer_state FROM {TBL_CUST} WHERE customer_id = %s", (cust_id,))
+                    current = cur.fetchone()
+                    if current and (current[0] != new_zip or current[1] != new_city or current[2] != new_state):
+                        break  # Found different location
+                
+                # UPDATE triggers CDC event
+                cur.execute(f"""UPDATE {TBL_CUST} 
+                                SET customer_zip_code_prefix = %s, 
+                                    customer_city = %s, 
+                                    customer_state = %s 
+                                WHERE customer_id = %s""", 
+                            (new_zip, new_city, new_state, cust_id))
+                
+                print(f"📍 [LOCATION] Customer {cust_id[:8]} moved to {new_city}, {new_state}")
+
+    except Exception as e:
+        print(f"⚠️ Location Update Failed: {e}")
+
 
 def scenario_update_order_status(conn: psycopg.Connection):
     try:
@@ -250,13 +354,19 @@ def run():
     
     try:
         while True:
-            # dice = random.randint(1, 100)
-            
+            # Create 1 transaction
             create_transaction(conn)
-            scenario_update_order_status(conn)
             
-            # Sleep between 1 and 3 seconds for visible output
-            time.sleep(random.uniform(4, 8))
+            # Update order status multiple times
+            for _ in range(random.randint(0, 10)):
+                scenario_update_order_status(conn)
+            
+            # Occasionally update customer or seller location (triggers SCD Type 2)
+            if random.random() < 0.3:  # 30% chance per cycle
+                scenario_update_location(conn)
+            
+            # Sleep between cycles
+            time.sleep(random.uniform(3, 6))
 
     except KeyboardInterrupt:
         print("\n🛑 Stopped.")

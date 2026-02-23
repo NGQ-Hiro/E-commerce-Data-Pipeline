@@ -49,9 +49,9 @@ CREATE TABLE products (
     product_description_length INTEGER, -- Độ dài thường là số nguyên
     product_photos_qty INTEGER,
     product_weight_g INTEGER,
-    product_length_cm DOUBLE PRECISION,
-    product_height_cm DOUBLE PRECISION,
-    product_width_cm DOUBLE PRECISION,
+    product_length_cm INTEGER,
+    product_height_cm INTEGER,
+    product_width_cm INTEGER,
     -- FK
     FOREIGN KEY (product_category_name) REFERENCES product_category_name_translation(product_category_name)
 );

@@ -2,12 +2,12 @@ e_commerce:
   outputs:
     dev:
       dataset: e_commerce_dataset_bronze
-      job_execution_timeout_seconds: 300
+      job_execution_timeout_seconds: 30
       job_retries: 1
-      location: US
+      location: us-central1
       method: oauth
       priority: interactive
       project: e-commerce-484010
-      threads: 1
+      threads: 4
       type: bigquery
   target: dev
