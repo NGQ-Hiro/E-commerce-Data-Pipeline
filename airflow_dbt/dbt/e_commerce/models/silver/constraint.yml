@@ -27,30 +27,30 @@ models:
       - name: state
         data_type: STRING
 
-  - name: sellers
-    config:
-      contract:
-        enforced: true
+  # - name: sellers
+  #   config:
+  #     contract:
+  #       enforced: true
     
-    constraints:
-      - type: primary_key
-        columns: [seller_id]
+  #   constraints:
+  #     - type: primary_key
+  #       columns: [seller_id]
 
-    columns:
-      - name: seller_id
-        data_type: STRING
+  #   columns:
+  #     - name: seller_id
+  #       data_type: STRING
 
-      - name: seller_zip_code_prefix
-        data_type: INT
+  #     - name: seller_zip_code_prefix
+  #       data_type: INT
 
-      - name: seller_city
-        data_type: STRING
+  #     - name: seller_city
+  #       data_type: STRING
 
-      - name: seller_state
-        data_type: STRING
+  #     - name: seller_state
+  #       data_type: STRING
       
-      - name: cdc_dt
-        data_type: DATE
+  #     - name: cdc_dt
+  #       data_type: DATE
 
   # - name: customers
   #   config:

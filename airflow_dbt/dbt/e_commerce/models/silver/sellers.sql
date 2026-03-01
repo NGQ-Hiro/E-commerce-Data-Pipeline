@@ -2,8 +2,10 @@
 {{
   config(
     materialized = 'incremental',
-    unique_key = 'seller_id',
-    on_schema_change='append_new_columns'
+    unique_key = 'scd_id', 
+    incremental_strategy = 'merge',
+    on_schema_change = 'append_new_columns',
+    cluster_by = ['seller_id']
   )
 }}
 
@@ -17,36 +19,137 @@ snapshot as (
 
 raw_source as (
     {% if is_incremental() %}
-        -- Get new changes from CDC
         select 
             after.seller_id,
             after.seller_zip_code_prefix,
             after.seller_city,
             after.seller_state,
+            op as operation,
+            timestamp_millis(source.ts_ms) as event_timestamp,
             cast(dt as date) as cdc_dt
         from cdc
-        -- Use dbt's built-in lookback logic instead of a manual run_query if possible
-        where dt > (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
+        where cast(dt as date) > (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
     {% else %}
-        -- Initial load from Snapshot
         select 
             seller_id,
             seller_zip_code_prefix,
             seller_city,
             seller_state,
-            cast(null as date) as cdc_dt
+            'r' as operation,
+            timestamp('2025-01-01') as event_timestamp,
+            cast('2026-01-01' as date) as cdc_dt
         from snapshot
     {% endif %}
 ),
 
-deduped_data as (
-    -- Ensure only 1 row per seller_id reaches the merge step
-    select *
+{% if is_incremental() %}
+
+-- OPTIMIZED: Only fetch old records that have NEW CDC events (avoid full table scan)
+old_records_affected as (
+    select 
+        scd_id,
+        seller_id,
+        seller_zip_code_prefix,
+        seller_city,
+        seller_state,
+        operation,
+        cdc_dt,
+        valid_from as event_timestamp
+    from {{ this }}
+    where seller_id in (select distinct seller_id from raw_source)
+),
+
+all_events as (
+    -- Old records that are affected
+    select * from old_records_affected
+    
+    union all
+    
+    -- New CDC events
+    select 
+        null as scd_id,
+        seller_id,
+        seller_zip_code_prefix,
+        seller_city,
+        seller_state,
+        operation,
+        cdc_dt,
+        event_timestamp
     from raw_source
-    qualify row_number() over (partition by seller_id order by cdc_dt desc nulls last) = 1
+),
+
+processing_scd as (
+    select 
+        coalesce(scd_id, generate_uuid()) as scd_id,
+        seller_id,
+        seller_zip_code_prefix,
+        seller_city,
+        seller_state,
+        operation,
+        cdc_dt,
+        event_timestamp,
+        
+        -- WINDOW FUNCTION on COMBINED data (only affected old + new)
+        lead(event_timestamp) over (
+            partition by seller_id 
+            order by event_timestamp asc
+        ) as next_event_time
+    from all_events
 )
 
--- dbt will take this SELECT and turn it into a MERGE for you
-select * from deduped_data
+select
+    scd_id,
+    seller_id,
+    seller_zip_code_prefix,
+    seller_city,
+    seller_state,
+    operation,
+    cdc_dt,
+    event_timestamp as valid_from,
+    
+    case 
+        when operation = 'd' then event_timestamp
+        else coalesce(next_event_time, timestamp('9999-12-31')) 
+    end as valid_to,
+    
+    case 
+        when next_event_time is null and operation != 'd' then true 
+        else false 
+    end as is_current
+from processing_scd
+
+{% else %}
+-- INITIAL LOAD: Just from snapshot
+
+processing_scd as (
+    select 
+        *,
+        generate_uuid() as scd_id,
+        lead(event_timestamp) over (partition by seller_id order by event_timestamp asc) as next_event_time
+    from raw_source
+)
+
+select
+    scd_id,
+    seller_id,
+    seller_zip_code_prefix,
+    seller_city,
+    seller_state,
+    operation,
+    cdc_dt,
+    event_timestamp as valid_from,
+    
+    case 
+        when operation = 'd' then event_timestamp
+        else coalesce(next_event_time, timestamp('9999-12-31')) 
+    end as valid_to,
+    
+    case 
+        when next_event_time is null and operation != 'd' then true 
+        else false 
+    end as is_current
+from processing_scd
+
+{% endif %}
 
 
