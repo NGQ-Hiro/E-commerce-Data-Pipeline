@@ -58,15 +58,16 @@ resource "google_project_service_identity" "pubsub_agent" {
 
 # 2. Grant "Storage Object Creator" (allows writing files) to that account
 resource "google_storage_bucket_iam_member" "pubsub_sink_creator" {
-  bucket = var.bucket_name
-  role   = "roles/storage.objectCreator"
-  member = "serviceAccount:${google_project_service_identity.pubsub_agent.email}"
+  bucket     = google_storage_bucket.my_bucket.name  # Reference actual bucket resource
+  role       = "roles/storage.objectCreator"
+  member     = "serviceAccount:${google_project_service_identity.pubsub_agent.email}"
+  depends_on = [google_storage_bucket.my_bucket]     # Explicit dependency
 }
 
 # 3. Grant "Storage Legacy Bucket Reader" (allows reading bucket metadata)
 resource "google_storage_bucket_iam_member" "pubsub_sink_reader" {
-  bucket = var.bucket_name
-  role   = "roles/storage.legacyBucketReader"
-  
-  member = "serviceAccount:${google_project_service_identity.pubsub_agent.email}"
+  bucket     = google_storage_bucket.my_bucket.name  # Reference actual bucket resource
+  role       = "roles/storage.legacyBucketReader"
+  member     = "serviceAccount:${google_project_service_identity.pubsub_agent.email}"
+  depends_on = [google_storage_bucket.my_bucket]     # Explicit dependency
 }

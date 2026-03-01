@@ -26,10 +26,10 @@ raw_source as (
             after.customer_city,
             after.customer_state,
             op as operation,
-            timestamp_millis(source_ts_ms) as event_timestamp,
+            timestamp_millis(source.ts_ms) as event_timestamp,
             cast(dt as date) as cdc_dt
         from cdc
-        where cast(dt as date) >= (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
+        where cast(dt as date) > (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
     {% else %}
         select 
             customer_id,
@@ -38,8 +38,8 @@ raw_source as (
             customer_city,
             customer_state,
             'r' as operation,
-            timestamp('2026-01-01') as event_timestamp,
-            cast(null as date) as cdc_dt
+            timestamp('2025-01-01') as event_timestamp,
+            cast('2026-01-01' as date) as cdc_dt
         from snapshot
     {% endif %}
 ),
@@ -122,10 +122,11 @@ select
         when next_event_time is null and operation != 'd' then true 
         else false 
     end as is_current
+from processing_scd
 
 {% else %}
-
 -- INITIAL LOAD: Just from snapshot
+
 processing_scd as (
     select 
         *,
