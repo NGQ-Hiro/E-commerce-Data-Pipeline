@@ -110,8 +110,8 @@ This project implements a modern data warehouse solution for an e-commerce platf
 
 This dashboard is built on top of the Gold layer (`order_bigtable`, `order_item_bigtable`) to provide business insights such as revenue trend, order volume, and top product performance.
 
-![Looker Dashboard Result](image/looker1.png)
-![Looker Dashboard Result](image/looker2.png)
+![Looker Dashboard Result](image/looker1.jpg)
+![Looker Dashboard Result](image/looker2.jpg)
 
 ---
 
