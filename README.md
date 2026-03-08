@@ -9,6 +9,7 @@ A end-to-end data pipeline for e-commerce analytics built on Google Cloud Platfo
 - [Project Structure](#project-structure)
 - [Data Model](#data-model)
 - [Key Features](#key-features)
+- [Looker Visualization](#looker-visualization)
 - [Documentation](#documentation)
 
 ---
@@ -102,6 +103,15 @@ This project implements a modern data warehouse solution for an e-commerce platf
 - Terraform for reproducible GCP setup
 - Version-controlled infrastructure
 - Easy environment replication
+
+---
+
+## Looker Visualization
+
+This dashboard is built on top of the Gold layer (`order_bigtable`, `order_item_bigtable`) to provide business insights such as revenue trend, order volume, and top product performance.
+
+![Looker Dashboard Result](image/looker1.png)
+![Looker Dashboard Result](image/looker2.png)
 
 ---
 
