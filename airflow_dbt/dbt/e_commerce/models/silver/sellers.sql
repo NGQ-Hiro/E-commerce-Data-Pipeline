@@ -18,33 +18,72 @@ snapshot as (
 ),
 
 raw_source as (
-    {% if is_incremental() %}
-        select 
-            after.seller_id,
-            after.seller_zip_code_prefix,
-            after.seller_city,
-            after.seller_state,
-            op as operation,
-            timestamp_millis(source.ts_ms) as event_timestamp,
-            cast(dt as date) as cdc_dt
-        from cdc
-        where cast(dt as date) > (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
-    {% else %}
-        select 
-            seller_id,
-            seller_zip_code_prefix,
-            seller_city,
-            seller_state,
-            'r' as operation,
-            timestamp('2025-01-01') as event_timestamp,
-            cast('2026-01-01' as date) as cdc_dt
-        from snapshot
-    {% endif %}
+{% if is_incremental() %}
+
+    select
+        -- deterministic event id
+        to_hex(md5(concat(
+            cast(after.seller_id as string),
+            cast(source.ts_ms as string),
+            cast(source.lsn as string)
+        ))) as scd_id,
+        after.seller_id as seller_id,
+        after.seller_zip_code_prefix as seller_zip_code_prefix,
+        after.seller_city as seller_city,
+        after.seller_state as seller_state,
+        op as operation,
+        cast(dt as date) as cdc_dt,
+        timestamp_trunc(timestamp_millis(source.ts_ms), second) as event_timestamp
+    from cdc
+
+    -- lookback 3 ngày để handle late data
+    where cast(dt as date) >= (
+        select date_sub(
+            coalesce(max(cdc_dt), '1900-01-01'),
+            interval 3 day
+        )
+        from {{ this }}
+    )
+
+    qualify row_number() over (
+            partition by after.seller_id, source.lsn
+            order by source.lsn desc
+        ) = 1
+
+{% else %}
+
+    select
+        to_hex(md5(concat(
+            cast(seller_id as string),
+            'snapshot'
+        ))) as scd_id,
+        seller_id,
+        seller_zip_code_prefix,
+        seller_city,
+        seller_state,
+        'r' as operation,
+        cast('2026-01-01' as date) as cdc_dt,
+        timestamp('2023-01-01') as event_timestamp
+
+    from snapshot
+
+{% endif %}
 ),
 
 {% if is_incremental() %}
 
--- OPTIMIZED: Only fetch old records that have NEW CDC events (avoid full table scan)
+-- Loại duplicate event đã tồn tại
+new_events as (
+    select *
+    from raw_source r
+    where not exists (
+        select 1
+        from {{ this }} t
+        where t.scd_id = r.scd_id
+    )
+),
+
+-- chỉ lấy record cũ của seller bị ảnh hưởng
 old_records_affected as (
     select 
         scd_id,
@@ -56,31 +95,20 @@ old_records_affected as (
         cdc_dt,
         valid_from as event_timestamp
     from {{ this }}
-    where seller_id in (select distinct seller_id from raw_source)
+    where seller_id in (
+        select distinct seller_id from new_events
+    )
 ),
 
 all_events as (
-    -- Old records that are affected
-    select * from old_records_affected
-    
+    select * from new_events
     union all
-    
-    -- New CDC events
-    select 
-        null as scd_id,
-        seller_id,
-        seller_zip_code_prefix,
-        seller_city,
-        seller_state,
-        operation,
-        cdc_dt,
-        event_timestamp
-    from raw_source
+    select * from old_records_affected
 ),
 
 processing_scd as (
     select 
-        coalesce(scd_id, generate_uuid()) as scd_id,
+        scd_id,
         seller_id,
         seller_zip_code_prefix,
         seller_city,
@@ -88,10 +116,8 @@ processing_scd as (
         operation,
         cdc_dt,
         event_timestamp,
-        
-        -- WINDOW FUNCTION on COMBINED data (only affected old + new)
         lead(event_timestamp) over (
-            partition by seller_id 
+            partition by seller_id
             order by event_timestamp asc
         ) as next_event_time
     from all_events
@@ -119,12 +145,10 @@ select
 from processing_scd
 
 {% else %}
--- INITIAL LOAD: Just from snapshot
 
 processing_scd as (
     select 
         *,
-        generate_uuid() as scd_id,
         lead(event_timestamp) over (partition by seller_id order by event_timestamp asc) as next_event_time
     from raw_source
 )
@@ -149,7 +173,4 @@ select
         else false 
     end as is_current
 from processing_scd
-
 {% endif %}
-
-

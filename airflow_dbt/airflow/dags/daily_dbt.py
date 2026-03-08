@@ -11,7 +11,7 @@ default_args = {
 
 # Define DAG
 dag = DAG(
-    'test_dbt_bigquery_run',
+    'daily_dbt',
     default_args=default_args,
     description='Test dbt BigQuery run',
     catchup=False,

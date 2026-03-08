@@ -25,7 +25,7 @@ raw_source as (
             after.payment_value,
             cast(dt as date) as cdc_dt
         from cdc
-        where cast(dt as date) > (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
+        where cast(dt as date) >= (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
     {% else %}
         -- Initial load from Snapshot
         select 

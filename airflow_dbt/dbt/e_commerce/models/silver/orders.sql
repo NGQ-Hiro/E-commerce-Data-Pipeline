@@ -33,7 +33,7 @@ raw_source as (
             TIMESTAMP_SECONDS(CAST(after.order_estimated_delivery_date / 1000000 AS INT64)) as order_estimated_delivery_date,
             cast(dt as date) as cdc_dt
         from cdc
-        where dt > (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
+        where dt >= (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
     {% else %}
         -- Initial load from Snapshot
         select 

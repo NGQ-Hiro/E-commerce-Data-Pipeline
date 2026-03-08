@@ -1,8 +1,7 @@
-
 {{
   config(
     materialized = 'incremental',
-    unique_key = 'scd_id', 
+    unique_key = 'scd_id',
     incremental_strategy = 'merge',
     on_schema_change = 'append_new_columns',
     cluster_by = ['customer_id']
@@ -18,35 +17,75 @@ snapshot as (
 ),
 
 raw_source as (
-    {% if is_incremental() %}
-        select 
-            after.customer_id as customer_id,
-            after.customer_unique_id,
-            after.customer_zip_code_prefix,
-            after.customer_city,
-            after.customer_state,
-            op as operation,
-            timestamp_millis(source.ts_ms) as event_timestamp,
-            cast(dt as date) as cdc_dt
-        from cdc
-        where cast(dt as date) > (select coalesce(max(cdc_dt), '1900-01-01') from {{ this }})
-    {% else %}
-        select 
-            customer_id,
-            customer_unique_id,
-            customer_zip_code_prefix,
-            customer_city,
-            customer_state,
-            'r' as operation,
-            timestamp('2025-01-01') as event_timestamp,
-            cast('2026-01-01' as date) as cdc_dt
-        from snapshot
-    {% endif %}
+
+{% if is_incremental() %}
+
+    select
+        -- deterministic event id
+        to_hex(md5(concat(
+            cast(after.customer_id as string),
+            cast(source.ts_ms as string),
+            cast(source.lsn as string)
+        ))) as scd_id,
+        after.customer_id as customer_id,
+        after.customer_unique_id as customer_unique_id,
+        after.customer_zip_code_prefix as customer_zip_code_prefix,
+        after.customer_city as customer_city,
+        after.customer_state as customer_state,
+        op as operation,
+        cast(dt as date) as cdc_dt,
+        timestamp_trunc(timestamp_millis(source.ts_ms), second) as event_timestamp
+    from cdc
+
+    -- lookback 3 ngày để handle late data
+    where cast(dt as date) >= (
+        select date_sub(
+            coalesce(max(cdc_dt), '1900-01-01'),
+            interval 3 day
+        )
+        from {{ this }}
+    )
+
+    -- deduplication trong trường hợp có nhiều event cho cùng 1 customer_id, lsn
+    qualify row_number() over (
+            partition by after.customer_id, source.lsn
+            order by source.lsn desc
+        ) = 1
+
+{% else %}
+
+    select
+        to_hex(md5(concat(
+            cast(customer_id as string),
+            'snapshot'
+        ))) as scd_id,
+        customer_id,
+        customer_unique_id,
+        customer_zip_code_prefix,
+        customer_city,
+        customer_state,
+        'r' as operation,
+        cast('2026-01-01' as date) as cdc_dt,
+        timestamp('2023-01-01') as event_timestamp
+    from snapshot
+
+{% endif %}
 ),
 
 {% if is_incremental() %}
 
--- OPTIMIZED: Only fetch old records that have NEW CDC events (avoid full table scan)
+-- Loại duplicate event đã tồn tại
+new_events as (
+    select *
+    from raw_source r
+    where not exists (
+        select 1
+        from {{ this }} t
+        where t.customer_id = r.customer_id and t.scd_id = r.scd_id
+    )
+),
+
+-- chỉ lấy record cũ của customer bị ảnh hưởng
 old_records_affected as (
     select 
         scd_id,
@@ -59,32 +98,20 @@ old_records_affected as (
         cdc_dt,
         valid_from as event_timestamp
     from {{ this }}
-    where customer_id in (select distinct customer_id from raw_source)
+    where customer_id in (
+        select distinct customer_id from new_events
+    )
 ),
 
 all_events as (
-    -- Old records that are affected
-    select * from old_records_affected
-    
+    select * from new_events
     union all
-    
-    -- New CDC events
-    select 
-        null as scd_id,
-        customer_id,
-        customer_unique_id,
-        customer_zip_code_prefix,
-        customer_city,
-        customer_state,
-        operation,
-        cdc_dt,
-        event_timestamp
-    from raw_source
+    select * from old_records_affected
 ),
 
 processing_scd as (
-    select 
-        coalesce(scd_id, generate_uuid()) as scd_id,
+    select
+        scd_id,
         customer_id,
         customer_unique_id,
         customer_zip_code_prefix,
@@ -92,11 +119,9 @@ processing_scd as (
         customer_state,
         operation,
         cdc_dt,
-        event_timestamp,
-        
-        -- WINDOW FUNCTION on COMBINED data (only affected old + new)
+        event_timestamp as valid_from,
         lead(event_timestamp) over (
-            partition by customer_id 
+            partition by customer_id
             order by event_timestamp asc
         ) as next_event_time
     from all_events
@@ -111,27 +136,29 @@ select
     customer_state,
     operation,
     cdc_dt,
-    event_timestamp as valid_from,
-    
-    case 
-        when operation = 'd' then event_timestamp
-        else coalesce(next_event_time, timestamp('9999-12-31')) 
+    valid_from,
+
+    case
+        when operation = 'd' then valid_from
+        else coalesce(next_event_time, timestamp('9999-12-31'))
     end as valid_to,
-    
-    case 
-        when next_event_time is null and operation != 'd' then true 
-        else false 
+
+    case
+        when next_event_time is null and operation != 'd'
+        then true else false
     end as is_current
+
 from processing_scd
 
 {% else %}
--- INITIAL LOAD: Just from snapshot
 
 processing_scd as (
-    select 
+    select
         *,
-        generate_uuid() as scd_id,
-        lead(event_timestamp) over (partition by customer_id order by event_timestamp asc) as next_event_time
+        lead(event_timestamp) over (
+            partition by customer_id
+            order by event_timestamp asc
+        ) as next_event_time
     from raw_source
 )
 
@@ -145,16 +172,16 @@ select
     operation,
     cdc_dt,
     event_timestamp as valid_from,
-    
-    case 
-        when operation = 'd' then event_timestamp
-        else coalesce(next_event_time, timestamp('9999-12-31')) 
-    end as valid_to,
-    
-    case 
-        when next_event_time is null and operation != 'd' then true 
-        else false 
-    end as is_current
-from processing_scd
 
+    case
+        when operation = 'd' then event_timestamp
+        else coalesce(next_event_time, timestamp('9999-12-31'))
+    end as valid_to,
+
+    case
+        when next_event_time is null and operation != 'd'
+        then true else false
+    end as is_current
+
+from processing_scd
 {% endif %}
